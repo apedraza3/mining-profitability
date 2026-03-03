@@ -37,6 +37,36 @@ MININGNOW_USER_AGENT = (
     "Chrome/131.0.0.0 Safari/537.36"
 )
 
+# Hashrate.no reference hashrates per model slug.
+# Used to scale HR.no revenue to the user's actual hashrate.
+# Format: slug -> (hashrate_value, hashrate_unit)
+HASHRATENO_REFERENCE_SPECS = {
+    # SHA-256 (TH/s)
+    "s21": (200, "TH/s"),
+    "s21hydro": (335, "TH/s"),
+    "s21phydro": (319, "TH/s"),
+    "s21plus": (216, "TH/s"),
+    "s21pro": (234, "TH/s"),
+    "s21xp": (270, "TH/s"),
+    "s21xphydro": (473, "TH/s"),
+    "s21immersion": (302, "TH/s"),
+    "a2pro": (255, "TH/s"),
+    "a2prohydro": (500, "TH/s"),
+    # Scrypt (GH/s)
+    "l9": (16, "GH/s"),
+    "l11": (18.7, "GH/s"),
+    "l11pro": (19.5, "GH/s"),
+    "dg1": (11, "GH/s"),
+    "dg1plus": (14, "GH/s"),
+    "dg1lite": (11, "GH/s"),
+    "dg2": (16, "GH/s"),
+    "dg2plus": (20.5, "GH/s"),
+    "l1": (5.3, "GH/s"),
+    # Equihash (KSol/s)
+    "z11": (135, "KH/s"),
+    "z15": (420, "KH/s"),
+}
+
 # Profitability thresholds (daily profit per unit in USD)
 PROFITABLE_THRESHOLD = 1.00       # >= $1/day = green
 MARGINAL_THRESHOLD = 0.00         # >= $0/day = yellow, < $0/day = red

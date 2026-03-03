@@ -98,6 +98,7 @@ class HashrateNoService:
             rev_data = best_match.get("revenue", {})
             return {
                 "raw_data": best_match,
+                "matched_slug": best_slug,
                 "matched_name": device.get("name", best_slug),
                 "match_confidence": best_score,
                 "daily_revenue": float(rev_data.get("revenue", 0) or 0),

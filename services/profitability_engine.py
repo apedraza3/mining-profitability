@@ -138,6 +138,17 @@ class ProfitabilityEngine:
             )
             if match:
                 daily_rev = match.get("daily_revenue", 0)
+
+                # Scale revenue to user's actual hashrate
+                slug = match.get("matched_slug", "")
+                ref_spec = config.HASHRATENO_REFERENCE_SPECS.get(slug)
+                if ref_spec and miner.get("hashrate"):
+                    ref_hr, ref_unit = ref_spec
+                    user_hr = miner["hashrate"]
+                    # Only scale if same unit (GH/s vs GH/s, TH/s vs TH/s)
+                    if ref_unit == miner.get("hashrate_unit") and ref_hr > 0:
+                        daily_rev = daily_rev * (user_hr / ref_hr)
+
                 daily_elec = self.daily_electricity_cost(
                     miner["wattage"], location["electricity_cost_kwh"]
                 )
