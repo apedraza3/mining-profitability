@@ -1,0 +1,53 @@
+{
+  "SHA-256": [
+    {"coin_id": 1, "name": "Bitcoin", "tag": "BTC"},
+    {"coin_id": 300, "name": "BitcoinCash", "tag": "BCH"},
+    {"coin_id": 292, "name": "BitcoinSV", "tag": "BSV"},
+    {"coin_id": 382, "name": "eCash", "tag": "XEC"}
+  ],
+  "Scrypt": [
+    {"coin_id": 4, "name": "Litecoin", "tag": "LTC"},
+    {"coin_id": 6, "name": "Dogecoin", "tag": "DOGE"}
+  ],
+  "Ethash": [
+    {"coin_id": 353, "name": "EthereumPoW", "tag": "ETHW"}
+  ],
+  "Etchash": [
+    {"coin_id": 162, "name": "EthereumClassic", "tag": "ETC"}
+  ],
+  "KHeavyHash": [
+    {"coin_id": 397, "name": "Kaspa", "tag": "KAS"},
+    {"coin_id": 428, "name": "Karlsen", "tag": "KLS"}
+  ],
+  "Blake3": [
+    {"coin_id": 396, "name": "Alephium", "tag": "ALPH"}
+  ],
+  "Autolykos": [
+    {"coin_id": 340, "name": "Ergo", "tag": "ERG"}
+  ],
+  "KawPow": [
+    {"coin_id": 234, "name": "Ravencoin", "tag": "RVN"},
+    {"coin_id": 361, "name": "Neoxa", "tag": "NEOX"}
+  ],
+  "Equihash": [
+    {"coin_id": 167, "name": "Zcash", "tag": "ZEC"}
+  ],
+  "RandomX": [
+    {"coin_id": 101, "name": "Monero", "tag": "XMR"}
+  ],
+  "X11": [
+    {"coin_id": 34, "name": "Dash", "tag": "DASH"}
+  ],
+  "Eaglesong": [
+    {"coin_id": 363, "name": "Nervos", "tag": "CKB"}
+  ],
+  "Handshake": [
+    {"coin_id": 356, "name": "Handshake", "tag": "HNS"}
+  ],
+  "FishHash": [
+    {"coin_id": 411, "name": "IronFish", "tag": "IRON"}
+  ],
+  "Cuckoo Cycle": [
+    {"coin_id": 348, "name": "Grin", "tag": "GRIN"}
+  ]
+}
