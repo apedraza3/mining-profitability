@@ -54,11 +54,11 @@ body {
 .source-dot.unavailable { background: #991b1b; color: #fecaca; }
 
 /* Auto refresh toggle */
-.auto-refresh-toggle {
+.auto-refresh-toggle, .active-only-toggle {
     display: flex; align-items: center; gap: 6px;
     font-size: 0.8rem; color: var(--text-muted); cursor: pointer;
 }
-.auto-refresh-toggle input { cursor: pointer; }
+.auto-refresh-toggle input, .active-only-toggle input { cursor: pointer; }
 
 /* Buttons */
 .btn {

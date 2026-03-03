@@ -262,8 +262,10 @@ function applyFilterLogic(data) {
     const typeFilter = document.getElementById('filterType').value;
     const locFilter = document.getElementById('filterLocation').value;
     const statusFilter = document.getElementById('filterStatus').value;
+    const activeOnly = document.getElementById('activeOnlyToggle').checked;
 
     return data.filter(r => {
+        if (activeOnly && r.status === 'inactive') return false;
         if (typeFilter && r.miner.type !== typeFilter) return false;
         if (locFilter && r.miner.location_id !== locFilter) return false;
         if (statusFilter && r.status !== statusFilter) return false;

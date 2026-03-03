@@ -80,6 +80,10 @@
                 <option value="unprofitable">Unprofitable</option>
                 <option value="inactive">Inactive</option>
             </select>
+            <label class="active-only-toggle">
+                <input type="checkbox" id="activeOnlyToggle" checked onchange="applyFilters()">
+                <span>Active only</span>
+            </label>
         </div>
         <div class="table-wrapper">
             <table class="miner-table" id="minerTable">
