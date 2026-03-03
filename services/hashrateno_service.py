@@ -71,24 +71,28 @@ class HashrateNoService:
         best_slug = None
         best_score = 0
 
+        query = model_key.lower()
         for slug, entry in estimates.items():
             device = entry.get("device", {})
             device_name = device.get("name", "")
-            query = model_key.lower()
             name = device_name.lower()
-            # Weighted combination: ratio (penalizes extra tokens like "XP",
-            # "Hyd.", "+") + partial_ratio (handles brand prefixes like
-            # "SealMiner A2 Pro Air" when searching "A2 Pro Air").
-            # This prevents "S21" from matching "S21 XP Hydro" over "S21".
-            ratio = fuzz.ratio(query, name)
+            # Three-way scoring:
+            #   token_set_ratio  — handles brand prefix differences
+            #                      ("ElphaPex DG1" matches "DG1")
+            #   partial_ratio   — handles substring matches
+            #                      ("S21+ Hyd" finds "Antminer S21+ Hydro")
+            #   ratio           — penalises length/content mismatches
+            #                      (prevents "Fluminer L1" matching "L1")
+            token_set = fuzz.token_set_ratio(query, name)
             partial = fuzz.partial_ratio(query, name)
-            score = ratio * 0.6 + partial * 0.4
+            ratio = fuzz.ratio(query, name)
+            score = token_set * 0.4 + partial * 0.3 + ratio * 0.3
             if score > best_score:
                 best_score = score
                 best_match = entry
                 best_slug = slug
 
-        if best_match and best_score >= 60:
+        if best_match and best_score >= 80:
             device = best_match.get("device", {})
             # revenue.revenue is the daily revenue (with powerCost=0, profit=revenue)
             rev_data = best_match.get("revenue", {})
