@@ -6,6 +6,7 @@ from services.whattomine_service import WhatToMineService
 from services.hashrateno_service import HashrateNoService
 from services.miningnow_service import MiningNowService
 from services.inventory_manager import InventoryManager
+from services.power_import import get_miner_actual_watts
 import config
 
 logger = logging.getLogger(__name__)
@@ -86,7 +87,9 @@ class ProfitabilityEngine:
             ),
         }
 
-    def _get_whattomine_data(self, miner: dict, location: dict) -> dict:
+    def _get_whattomine_data(
+        self, miner: dict, location: dict, primary_only: bool = True
+    ) -> dict:
         """Get WhatToMine profitability for a miner."""
         result = {
             "available": False,
@@ -99,7 +102,7 @@ class ProfitabilityEngine:
         }
         try:
             coins = self.whattomine.get_profitability_for_miner(
-                miner, location, self.coin_mappings
+                miner, location, self.coin_mappings, primary_only=primary_only
             )
             if coins:
                 best = coins[0]
@@ -134,10 +137,7 @@ class ProfitabilityEngine:
                 model_key, miner.get("type", "ASIC")
             )
             if match:
-                raw = match["raw_data"]
-                # With powerCost=0, the "profit" or "revenue" field is pure revenue
-                # We need to extract revenue and calculate electricity ourselves
-                daily_rev = self._extract_revenue(raw)
+                daily_rev = match.get("daily_revenue", 0)
                 daily_elec = self.daily_electricity_cost(
                     miner["wattage"], location["electricity_cost_kwh"]
                 )
@@ -153,37 +153,6 @@ class ProfitabilityEngine:
         except Exception as e:
             logger.error("Hashrate.no error for %s: %s", miner.get("name"), e)
         return result
-
-    def _extract_revenue(self, raw_data: dict) -> float:
-        """Extract daily revenue from Hashrate.no raw data.
-        The API response structure may vary — try common field names."""
-        # Try direct revenue/profit fields
-        for key in ["revenue", "profit", "dailyRevenue", "dailyProfit",
-                     "estimatedRevenue", "daily_revenue"]:
-            val = raw_data.get(key)
-            if val is not None:
-                try:
-                    return float(val)
-                except (ValueError, TypeError):
-                    continue
-
-        # Try nested coins array — sum up revenues
-        coins = raw_data.get("coins", raw_data.get("estimatedCoins", []))
-        if isinstance(coins, list):
-            total = 0
-            for coin in coins:
-                for key in ["revenue", "estimatedRevenue", "profit", "usd"]:
-                    val = coin.get(key)
-                    if val is not None:
-                        try:
-                            total += float(val)
-                            break
-                        except (ValueError, TypeError):
-                            continue
-            if total > 0:
-                return total
-
-        return 0.0
 
     def _get_miningnow_data(self, miner: dict) -> dict:
         """Get MiningNow data for a miner (ASIC only)."""
@@ -220,12 +189,29 @@ class ProfitabilityEngine:
         else:
             return "unprofitable"
 
-    def calculate_for_miner(self, miner: dict, location: dict) -> dict:
-        """Calculate full profitability data for one miner."""
+    def calculate_for_miner(
+        self, miner: dict, location: dict, primary_only: bool = True
+    ) -> dict:
+        """Calculate profitability data for one miner.
+        primary_only=True fetches only the main coin per algo (faster, for table view).
+        primary_only=False fetches all coins (for detail panel)."""
+        # Check for imported actual wattage data (CSV import)
+        actual_watts = get_miner_actual_watts(miner.get("name", ""))
+        nameplate_watts = miner.get("wattage", 0)
+        effective_watts = actual_watts if actual_watts else nameplate_watts
+
+        power_info = {
+            "nameplate_watts": nameplate_watts,
+            "actual_watts": actual_watts,
+            "effective_watts": effective_watts,
+            "source": "csv_import" if actual_watts else "nameplate",
+        }
+
         if miner.get("status") == "inactive":
             return {
                 "miner": miner,
                 "location": location,
+                "power": power_info,
                 "sources": {
                     "whattomine": {"available": False},
                     "hashrateno": {"available": False},
@@ -240,17 +226,58 @@ class ProfitabilityEngine:
                 "status": "inactive",
             }
 
-        wtm = self._get_whattomine_data(miner, location)
+        # Use effective watts for Hashrate.no electricity calc
+        # WhatToMine calculates its own electricity from the wattage we send,
+        # so we recalculate WTM profit using actual watts if available
+        wtm = self._get_whattomine_data(miner, location, primary_only=primary_only)
+        if actual_watts and wtm["available"]:
+            # WTM used nameplate watts — recalculate electricity with actual
+            actual_elec = self.daily_electricity_cost(
+                effective_watts, location["electricity_cost_kwh"]
+            )
+            for coin in wtm.get("all_coins", []):
+                coin["daily_electricity"] = actual_elec
+                coin["daily_profit"] = coin["daily_revenue"] - actual_elec
+            if wtm["all_coins"]:
+                wtm["all_coins"].sort(key=lambda x: x["daily_profit"], reverse=True)
+                best = wtm["all_coins"][0]
+                wtm["daily_electricity"] = actual_elec
+                wtm["daily_profit"] = best["daily_profit"]
+                wtm["monthly_profit"] = best["daily_profit"] * 30
+
         hrn = self._get_hashrateno_data(miner, location)
+        if actual_watts and hrn["available"]:
+            # Recalculate Hashrate.no electricity with actual watts
+            actual_elec = self.daily_electricity_cost(
+                effective_watts, location["electricity_cost_kwh"]
+            )
+            hrn["daily_electricity"] = actual_elec
+            hrn["daily_profit"] = hrn["daily_revenue"] - actual_elec
+            hrn["monthly_profit"] = hrn["daily_profit"] * 30
+
         mn = self._get_miningnow_data(miner)
 
         # Best daily profit from available sources
         profits = []
         if wtm["available"]:
-            profits.append(wtm["daily_profit"])
+            profits.append(("whattomine", wtm["daily_profit"]))
         if hrn["available"]:
-            profits.append(hrn["daily_profit"])
-        best_daily = max(profits) if profits else 0
+            profits.append(("hashrateno", hrn["daily_profit"]))
+        if profits:
+            best_source, best_daily = max(profits, key=lambda x: x[1])
+        else:
+            best_source, best_daily = None, 0
+
+        # Revenue from the best source; electricity is the same for all sources
+        daily_electricity = self.daily_electricity_cost(
+            effective_watts, location.get("electricity_cost_kwh", 0.10)
+        )
+        if best_source == "whattomine":
+            daily_revenue = wtm.get("daily_revenue", 0)
+        elif best_source == "hashrateno":
+            daily_revenue = hrn.get("daily_revenue", 0)
+        else:
+            daily_revenue = 0
 
         roi = self.calculate_roi(
             miner.get("purchase_price", 0),
@@ -262,13 +289,17 @@ class ProfitabilityEngine:
         return {
             "miner": miner,
             "location": location,
+            "power": power_info,
             "sources": {
                 "whattomine": wtm,
                 "hashrateno": hrn,
                 "miningnow": mn,
             },
             "roi": roi,
-            "best_daily_profit": best_daily,
+            "daily_revenue": round(daily_revenue, 2),
+            "daily_electricity": round(daily_electricity, 2),
+            "best_daily_profit": round(best_daily, 2),
+            "best_source": best_source,
             "status": self._get_status(best_daily),
         }
 
@@ -300,7 +331,8 @@ class ProfitabilityEngine:
         )
         total_daily_elec = sum(
             self.daily_electricity_cost(
-                r["miner"]["wattage"], r["location"].get("electricity_cost_kwh", 0.10)
+                r["power"]["effective_watts"],
+                r["location"].get("electricity_cost_kwh", 0.10),
             ) * r["miner"].get("quantity", 1)
             for r in active
         )

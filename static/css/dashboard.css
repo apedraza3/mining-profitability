@@ -167,6 +167,10 @@ body {
 .miner-table th.sortable:hover { color: var(--primary); }
 .miner-table th.sort-asc::after { content: " ▲"; font-size: 0.65rem; }
 .miner-table th.sort-desc::after { content: " ▼"; font-size: 0.65rem; }
+.miner-table th.best-profit-col {
+    color: var(--profit-green);
+    border-bottom-color: var(--profit-green);
+}
 
 .miner-table td {
     padding: 10px 12px;
@@ -176,6 +180,9 @@ body {
 .miner-table tbody tr { cursor: pointer; transition: background 0.15s; }
 .miner-table tbody tr:hover { background: var(--surface-hover); }
 .miner-table tbody tr.expanded { background: var(--surface); }
+.miner-table td.best-profit { font-size: 0.95rem; }
+.miner-table .totals-row { border-top: 2px solid var(--primary); cursor: default; }
+.miner-table .totals-row:hover { background: transparent; }
 
 /* Status badges */
 .status-badge {

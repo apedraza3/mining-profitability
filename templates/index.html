@@ -25,6 +25,7 @@
                 <span>Auto (30m)</span>
             </label>
             <button class="btn btn-primary" id="refreshBtn" onclick="refreshData()">Refresh Data</button>
+            <button class="btn btn-secondary" onclick="openPowerImportModal()">CSV Import</button>
             <button class="btn btn-secondary" onclick="openLocationsModal()">Locations</button>
             <button class="btn btn-success" onclick="openMinerModal()">+ Add Miner</button>
         </div>
@@ -93,11 +94,10 @@
                         <th>Hashrate</th>
                         <th>Watts</th>
                         <th>Qty</th>
-                        <th class="sortable" data-col="wtm_profit" onclick="sortTable('wtm_profit')">WTM $/day</th>
-                        <th class="sortable" data-col="hrn_profit" onclick="sortTable('hrn_profit')">HR.no $/day</th>
-                        <th class="sortable" data-col="mn_rank" onclick="sortTable('mn_rank')">MN Rank</th>
-                        <th class="sortable" data-col="best_profit" onclick="sortTable('best_profit')">Best $/day</th>
-                        <th class="sortable" data-col="roi_days" onclick="sortTable('roi_days')">ROI Days</th>
+                        <th class="sortable" data-col="revenue" onclick="sortTable('revenue')" title="Daily mining revenue before electricity costs">Revenue</th>
+                        <th class="sortable" data-col="electricity" onclick="sortTable('electricity')" title="Daily electricity cost based on wattage and $/kWh">Elec. Cost</th>
+                        <th class="sortable best-profit-col" data-col="best_profit" onclick="sortTable('best_profit')" title="Daily profit after electricity — revenue minus elec. cost">Daily Profit</th>
+                        <th class="sortable" data-col="roi_days" onclick="sortTable('roi_days')" title="Days until purchase price is paid back">ROI</th>
                         <th>Status</th>
                         <th>Actions</th>
                     </tr>
@@ -236,6 +236,42 @@
             <div class="form-actions">
                 <button class="btn btn-success" onclick="addLocationRow()">+ Add Location</button>
                 <button class="btn btn-secondary" onclick="closeLocationsModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- CSV Power Import Modal -->
+    <div class="modal-overlay" id="powerImportModal" style="display:none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>CSV Power Report Import</h3>
+                <button class="btn-close" onclick="closePowerImportModal()">&times;</button>
+            </div>
+            <div class="power-import-content">
+                <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:16px;">
+                    Upload a power report CSV to get actual wattage readings for your miners.
+                    This data will override nameplate wattage in profitability calculations.
+                </p>
+                <div class="power-import-upload-area" id="powerImportUploadArea">
+                    <input type="file" id="powerImportFileInput" accept=".csv" style="display:none" onchange="uploadPowerCSV(this)">
+                    <button class="btn btn-primary" onclick="document.getElementById('powerImportFileInput').click()">
+                        Upload CSV File
+                    </button>
+                    <span id="powerImportFileName" style="margin-left:10px;color:var(--text-muted);font-size:0.85rem;"></span>
+                </div>
+                <div id="powerImportStatus" style="margin-top:16px;"></div>
+                <div id="powerImportDataSummary" style="margin-top:16px;"></div>
+                <div id="powerImportAddSection" style="display:none;margin-top:16px;border-top:1px solid var(--border);padding-top:12px;">
+                    <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+                        <label style="color:var(--text-muted);font-size:0.85rem;">Location:</label>
+                        <select id="powerImportLocation" style="flex:1;"></select>
+                        <button class="btn btn-success btn-sm" onclick="addSelectedMiners()">Add Selected to Inventory</button>
+                    </div>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button class="btn btn-danger btn-sm" onclick="clearPowerData()" id="powerImportClearBtn" style="display:none;">Clear Imported Data</button>
+                <button class="btn btn-secondary" onclick="closePowerImportModal()">Close</button>
             </div>
         </div>
     </div>

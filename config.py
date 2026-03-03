@@ -24,7 +24,7 @@ HASHRATE_NO_API_KEY = os.getenv("HASHRATE_NO_API_KEY", "")
 
 # WhatToMine
 WHATTOMINE_BASE_URL = "https://whattomine.com"
-WHATTOMINE_REQUEST_DELAY = 2.0    # seconds between requests (be polite)
+WHATTOMINE_REQUEST_DELAY = 3.0    # seconds between requests (be polite)
 
 # Hashrate.no
 HASHRATENO_BASE_URL = "https://hashrate.no/api/v2"

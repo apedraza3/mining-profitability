@@ -1,0 +1,100 @@
+{
+  "miners": {
+    "R3L4S2-Antminer L9 - 192.168.41.65": {
+      "miner_id": "",
+      "miner_name": "R3L4S2-Antminer L9 - 192.168.41.65",
+      "miner_type": "Antminer L9 (17G)",
+      "theoretical_hash_rate": 17000000000.0,
+      "avg_power_draw_wh": 80585.65,
+      "avg_power_watts": 3357.74,
+      "avg_uptime_pct": 100.0,
+      "total_power_cost": 6.45,
+      "days_in_report": 1,
+      "daily_readings": [
+        {
+          "date": "2026-03-02",
+          "power_draw_wh": 80585.65,
+          "uptime_pct": 100.0,
+          "power_cost": 6.446852000000001
+        }
+      ]
+    },
+    "R3L4S3-Antminer L9 - 192.168.42.47": {
+      "miner_id": "",
+      "miner_name": "R3L4S3-Antminer L9 - 192.168.42.47",
+      "miner_type": "Antminer L9 (16G)",
+      "theoretical_hash_rate": 16000000000.0,
+      "avg_power_draw_wh": 80585.65,
+      "avg_power_watts": 3357.74,
+      "avg_uptime_pct": 100.0,
+      "total_power_cost": 6.45,
+      "days_in_report": 1,
+      "daily_readings": [
+        {
+          "date": "2026-03-02",
+          "power_draw_wh": 80585.65,
+          "uptime_pct": 100.0,
+          "power_cost": 6.446852000000002
+        }
+      ]
+    },
+    "R3L4S4-Antminer S21 - 192.168.41.183": {
+      "miner_id": "",
+      "miner_name": "R3L4S4-Antminer S21 - 192.168.41.183",
+      "miner_type": "Antminer S21 (braiins)",
+      "theoretical_hash_rate": 200000000000000.0,
+      "avg_power_draw_wh": 85406.72,
+      "avg_power_watts": 3558.61,
+      "avg_uptime_pct": 100.0,
+      "total_power_cost": 6.83,
+      "days_in_report": 1,
+      "daily_readings": [
+        {
+          "date": "2026-03-02",
+          "power_draw_wh": 85406.71666666667,
+          "uptime_pct": 100.0,
+          "power_cost": 6.832537333333334
+        }
+      ]
+    },
+    "Sealminer A2 Pro": {
+      "miner_id": "",
+      "miner_name": "Sealminer A2 Pro",
+      "miner_type": "SealMiner A2 Pro",
+      "theoretical_hash_rate": 260000000000000.0,
+      "avg_power_draw_wh": 95046.57,
+      "avg_power_watts": 3960.27,
+      "avg_uptime_pct": 100.0,
+      "total_power_cost": 7.6,
+      "days_in_report": 1,
+      "daily_readings": [
+        {
+          "date": "2026-03-02",
+          "power_draw_wh": 95046.56666666668,
+          "uptime_pct": 100.0,
+          "power_cost": 7.603725333333332
+        }
+      ]
+    },
+    "(TEMP) R5L2S1-ElphaPex DG1 - 192.168.41.127": {
+      "miner_id": "",
+      "miner_name": "(TEMP) R5L2S1-ElphaPex DG1 - 192.168.41.127",
+      "miner_type": "ElphaPex DG1",
+      "theoretical_hash_rate": 11000000000.0,
+      "avg_power_draw_wh": 77526.27,
+      "avg_power_watts": 3230.26,
+      "avg_uptime_pct": 100.0,
+      "total_power_cost": 6.2,
+      "days_in_report": 1,
+      "daily_readings": [
+        {
+          "date": "2026-03-02",
+          "power_draw_wh": 77526.26666666666,
+          "uptime_pct": 100.0,
+          "power_cost": 6.202101333333332
+        }
+      ]
+    }
+  },
+  "last_import": "2026-03-03T13:38:32.159667"
+}

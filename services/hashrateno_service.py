@@ -53,43 +53,51 @@ class HashrateNoService:
         return data
 
     def find_model_estimate(self, model_key: str, miner_type: str) -> dict | None:
-        """Find the best matching model from cached estimates using fuzzy matching."""
+        """Find the best matching model from cached estimates using fuzzy matching.
+        Hashrate.no returns a dict keyed by slug, each value has:
+          device: {name, brand}
+          profit: {ticker, yield, revenue, profit}
+          revenue: {ticker, yield, revenue, profit}
+        """
         if miner_type == "GPU":
             estimates = self.get_gpu_estimates()
         else:
             estimates = self.get_asic_estimates()
 
-        if not estimates:
+        if not estimates or not isinstance(estimates, dict):
             return None
 
         best_match = None
+        best_slug = None
         best_score = 0
 
-        for entry in estimates:
-            # Try common field names for the device name
-            device_name = (
-                entry.get("name")
-                or entry.get("device")
-                or entry.get("model")
-                or entry.get("deviceName")
-                or ""
-            )
-            score = fuzz.token_sort_ratio(model_key.lower(), device_name.lower())
+        for slug, entry in estimates.items():
+            device = entry.get("device", {})
+            device_name = device.get("name", "")
+            query = model_key.lower()
+            name = device_name.lower()
+            # Weighted combination: ratio (penalizes extra tokens like "XP",
+            # "Hyd.", "+") + partial_ratio (handles brand prefixes like
+            # "SealMiner A2 Pro Air" when searching "A2 Pro Air").
+            # This prevents "S21" from matching "S21 XP Hydro" over "S21".
+            ratio = fuzz.ratio(query, name)
+            partial = fuzz.partial_ratio(query, name)
+            score = ratio * 0.6 + partial * 0.4
             if score > best_score:
                 best_score = score
                 best_match = entry
+                best_slug = slug
 
-        if best_match and best_score >= 70:
+        if best_match and best_score >= 60:
+            device = best_match.get("device", {})
+            # revenue.revenue is the daily revenue (with powerCost=0, profit=revenue)
+            rev_data = best_match.get("revenue", {})
             return {
                 "raw_data": best_match,
-                "matched_name": (
-                    best_match.get("name")
-                    or best_match.get("device")
-                    or best_match.get("model")
-                    or best_match.get("deviceName")
-                    or "Unknown"
-                ),
+                "matched_name": device.get("name", best_slug),
                 "match_confidence": best_score,
+                "daily_revenue": float(rev_data.get("revenue", 0) or 0),
+                "best_coin": rev_data.get("ticker", ""),
             }
         return None
 
@@ -97,15 +105,11 @@ class HashrateNoService:
         """Get all model names for autocomplete."""
         names = []
         for estimates in [self.get_gpu_estimates(), self.get_asic_estimates()]:
-            if not estimates:
+            if not estimates or not isinstance(estimates, dict):
                 continue
-            for entry in estimates:
-                name = (
-                    entry.get("name")
-                    or entry.get("device")
-                    or entry.get("model")
-                    or entry.get("deviceName")
-                )
+            for slug, entry in estimates.items():
+                device = entry.get("device", {})
+                name = device.get("name")
                 if name:
                     names.append(name)
         return sorted(set(names))

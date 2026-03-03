@@ -173,12 +173,11 @@ function renderMinerTable(minerResults) {
             <td>${esc(loc.name || '--')}</td>
             <td>$${(loc.electricity_cost_kwh || 0).toFixed(2)}</td>
             <td>${m.hashrate} ${m.hashrate_unit}</td>
-            <td>${m.wattage}W</td>
+            <td>${formatWatts(r.power)}</td>
             <td>${m.quantity || 1}</td>
-            <td class="${profitClass(wtm.daily_profit)}">${wtm.available ? formatCurrency(wtm.daily_profit) : '--'}</td>
-            <td class="${profitClass(hrn.daily_profit)}">${hrn.available ? formatCurrency(hrn.daily_profit) : '--'}</td>
-            <td>${mn.available ? (mn.rank || '--') : '--'}</td>
-            <td class="${profitClass(best)}"><strong>${formatCurrency(best)}</strong></td>
+            <td>${formatCurrency(r.daily_revenue)}</td>
+            <td style="color:var(--profit-red)">${formatCurrency(r.daily_electricity)}</td>
+            <td class="best-profit ${profitClass(best)}"><strong>${formatCurrency(best)}</strong></td>
             <td>${r.roi && r.roi.days_to_roi > 0 ? r.roi.days_to_roi + 'd' : '--'}</td>
             <td><span class="status-badge status-${r.status}">${r.status}</span></td>
             <td class="action-btns" onclick="event.stopPropagation()">
@@ -189,6 +188,29 @@ function renderMinerTable(minerResults) {
         `;
         tbody.appendChild(tr);
     });
+
+    // Totals row
+    let totalWatts = 0, totalQty = 0, totalRevenue = 0, totalElec = 0, totalProfit = 0;
+    filtered.forEach(r => {
+        const qty = r.miner.quantity || 1;
+        totalWatts += (r.power ? r.power.effective_watts || r.power.nameplate_watts : r.miner.wattage || 0) * qty;
+        totalQty += qty;
+        totalRevenue += (r.daily_revenue || 0) * qty;
+        totalElec += (r.daily_electricity || 0) * qty;
+        totalProfit += (r.best_daily_profit || 0) * qty;
+    });
+    const totalTr = document.createElement('tr');
+    totalTr.className = 'totals-row';
+    totalTr.innerHTML = `
+        <td colspan="7" style="text-align:right;font-weight:700;">Totals</td>
+        <td style="font-weight:700;">${Math.round(totalWatts)}W</td>
+        <td style="font-weight:700;">${totalQty}</td>
+        <td style="font-weight:700;">${formatCurrency(totalRevenue)}</td>
+        <td style="font-weight:700;color:var(--profit-red)">${formatCurrency(totalElec)}</td>
+        <td class="best-profit ${profitClass(totalProfit)}" style="font-weight:700;">${formatCurrency(totalProfit)}</td>
+        <td colspan="3"></td>
+    `;
+    tbody.appendChild(totalTr);
 
     // Update sort headers
     document.querySelectorAll('.miner-table th').forEach(th => {
@@ -216,12 +238,8 @@ function sortData(data) {
             case 'name': va = a.miner.name; vb = b.miner.name; break;
             case 'model': va = a.miner.model; vb = b.miner.model; break;
             case 'location': va = a.location.name || ''; vb = b.location.name || ''; break;
-            case 'wtm_profit': va = a.sources.whattomine.daily_profit; vb = b.sources.whattomine.daily_profit; break;
-            case 'hrn_profit': va = a.sources.hashrateno.daily_profit; vb = b.sources.hashrateno.daily_profit; break;
-            case 'mn_rank':
-                va = a.sources.miningnow.rank || 9999;
-                vb = b.sources.miningnow.rank || 9999;
-                break;
+            case 'revenue': va = a.daily_revenue || 0; vb = b.daily_revenue || 0; break;
+            case 'electricity': va = a.daily_electricity || 0; vb = b.daily_electricity || 0; break;
             case 'best_profit': va = a.best_daily_profit || 0; vb = b.best_daily_profit || 0; break;
             case 'roi_days':
                 va = a.roi && a.roi.days_to_roi > 0 ? a.roi.days_to_roi : 99999;
@@ -464,10 +482,253 @@ function showLoading(show) {
     document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none';
 }
 
+function formatWatts(power) {
+    if (!power) return '--';
+    if (power.source === 'csv_import') {
+        return `<span title="Imported actual: ${Math.round(power.actual_watts)}W | Nameplate: ${power.nameplate_watts}W" style="border-bottom:1px dotted var(--success)">${Math.round(power.actual_watts)}W</span>`;
+    }
+    return `${power.nameplate_watts}W`;
+}
+
 function showToast(message, type = '') {
     const toast = document.createElement('div');
     toast.className = 'toast ' + type;
     toast.textContent = message;
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 4000);
+}
+
+// ---- CSV Power Import ----
+function openPowerImportModal() {
+    document.getElementById('powerImportModal').style.display = 'flex';
+    loadPowerImportStatus();
+    // Populate location dropdown
+    const locSelect = document.getElementById('powerImportLocation');
+    locSelect.innerHTML = '';
+    locations.forEach(l => {
+        const opt = document.createElement('option');
+        opt.value = l.id;
+        opt.textContent = `${l.name} ($${l.electricity_cost_kwh}/kWh)`;
+        locSelect.appendChild(opt);
+    });
+}
+
+function closePowerImportModal() {
+    document.getElementById('powerImportModal').style.display = 'none';
+}
+
+// Model-to-algorithm mapping for auto-detection
+const MODEL_ALGO_MAP = {
+    // SHA-256
+    's21': 'SHA-256', 's19': 'SHA-256', 's17': 'SHA-256', 's15': 'SHA-256', 's9': 'SHA-256',
+    't21': 'SHA-256', 't19': 'SHA-256', 't17': 'SHA-256',
+    'a2 pro': 'SHA-256', 'sealminer a2': 'SHA-256',
+    'whatsminer m60': 'SHA-256', 'whatsminer m50': 'SHA-256', 'whatsminer m30': 'SHA-256',
+    'avalon': 'SHA-256',
+    // Scrypt
+    'l9': 'Scrypt', 'l7': 'Scrypt', 'l3': 'Scrypt',
+    'dg1': 'Scrypt', 'elphapex': 'Scrypt',
+    // KHeavyHash (Kaspa)
+    'ks3': 'KHeavyHash', 'ks5': 'KHeavyHash', 'ks0': 'KHeavyHash',
+    'iceriver': 'KHeavyHash',
+    // Equihash
+    'z15': 'Equihash', 'z11': 'Equihash',
+    // X11
+    'd9': 'X11', 'd7': 'X11',
+    // Eaglesong
+    'ck5': 'Eaglesong',
+    // Blake3
+    'al1': 'Blake3',
+};
+
+function detectAlgorithm(modelStr) {
+    const lower = modelStr.toLowerCase();
+    for (const [pattern, algo] of Object.entries(MODEL_ALGO_MAP)) {
+        if (lower.includes(pattern)) return algo;
+    }
+    return '';
+}
+
+function formatHashrate(hashesPerSecond) {
+    if (!hashesPerSecond || hashesPerSecond <= 0) return { value: 0, unit: 'TH/s' };
+    const units = [
+        { threshold: 1e15, unit: 'PH/s' },
+        { threshold: 1e12, unit: 'TH/s' },
+        { threshold: 1e9, unit: 'GH/s' },
+        { threshold: 1e6, unit: 'MH/s' },
+        { threshold: 1e3, unit: 'KH/s' },
+    ];
+    for (const u of units) {
+        if (hashesPerSecond >= u.threshold) {
+            return { value: parseFloat((hashesPerSecond / u.threshold).toFixed(2)), unit: u.unit };
+        }
+    }
+    return { value: Math.round(hashesPerSecond), unit: 'H/s' };
+}
+
+function extractModelName(minerType) {
+    // "Antminer L9 (17G)" → "Antminer L9"
+    // "SealMiner A2 Pro" → "SealMiner A2 Pro"
+    // "ElphaPex DG1" → "ElphaPex DG1"
+    return minerType.replace(/\s*\([^)]*\)\s*$/, '').trim();
+}
+
+async function loadPowerImportStatus() {
+    try {
+        const resp = await fetch('/api/power-import/data');
+        const data = await resp.json();
+        const summary = document.getElementById('powerImportDataSummary');
+        const clearBtn = document.getElementById('powerImportClearBtn');
+        const addSection = document.getElementById('powerImportAddSection');
+        const miners = data.miners || {};
+        const count = Object.keys(miners).length;
+
+        // Get existing inventory miner names for comparison
+        const inventoryNames = (dashboardData?.miners || []).map(r => r.miner.name.toLowerCase());
+
+        if (count > 0) {
+            clearBtn.style.display = 'inline-block';
+            let hasUnmatched = false;
+            let html = `<p style="color:var(--success);font-size:0.85rem;margin-bottom:8px;">
+                ${count} miners imported (last: ${data.last_import ? new Date(data.last_import).toLocaleString() : 'unknown'})
+            </p><table class="coin-table"><thead><tr>
+                <th style="width:30px;"></th>
+                <th>Miner Name</th><th>Model</th><th>Avg Watts</th><th>Uptime</th><th>Days</th><th>In Inventory</th>
+            </tr></thead><tbody>`;
+            for (const [name, info] of Object.entries(miners)) {
+                const model = extractModelName(info.miner_type || '');
+                // Check if already in inventory (substring match like the backend does)
+                const nameLower = name.toLowerCase();
+                const inInventory = inventoryNames.some(inv =>
+                    inv.includes(nameLower) || nameLower.includes(inv)
+                ) || (dashboardData?.miners || []).some(r => {
+                    const n = r.miner.name.toLowerCase();
+                    return n.includes(nameLower) || nameLower.includes(n);
+                });
+
+                if (!inInventory) hasUnmatched = true;
+
+                html += `<tr style="${inInventory ? 'opacity:0.5;' : ''}">
+                    <td><input type="checkbox" class="csv-miner-check" data-name="${esc(name)}" ${inInventory ? 'disabled title="Already in inventory"' : ''}></td>
+                    <td>${esc(name)}</td>
+                    <td style="color:var(--text-muted);font-size:0.85rem;">${esc(model)}</td>
+                    <td>${Math.round(info.avg_power_watts)}W</td>
+                    <td>${info.avg_uptime_pct.toFixed(1)}%</td>
+                    <td>${info.days_in_report}</td>
+                    <td>${inInventory ? '<span style="color:var(--success)">Yes</span>' : '<span style="color:var(--text-muted)">No</span>'}</td>
+                </tr>`;
+            }
+            html += '</tbody></table>';
+            summary.innerHTML = html;
+
+            // Show add section if there are miners not yet in inventory
+            addSection.style.display = hasUnmatched ? 'block' : 'none';
+        } else {
+            clearBtn.style.display = 'none';
+            addSection.style.display = 'none';
+            summary.innerHTML = '<p style="color:var(--text-muted);font-size:0.85rem;">No power data imported yet.</p>';
+        }
+    } catch (err) {
+        console.error('Failed to load power import data', err);
+    }
+}
+
+async function addSelectedMiners() {
+    const checkboxes = document.querySelectorAll('.csv-miner-check:checked');
+    if (checkboxes.length === 0) {
+        showToast('Select at least one miner to add', 'error');
+        return;
+    }
+
+    const locationId = document.getElementById('powerImportLocation').value;
+    if (!locationId) {
+        showToast('Please select a location', 'error');
+        return;
+    }
+
+    // Get full power import data for metadata
+    const resp = await fetch('/api/power-import/data');
+    const powerData = await resp.json();
+    const csvMiners = powerData.miners || {};
+
+    let added = 0;
+    for (const cb of checkboxes) {
+        const csvName = cb.dataset.name;
+        const info = csvMiners[csvName];
+        if (!info) continue;
+
+        const model = extractModelName(info.miner_type || '');
+        const algo = detectAlgorithm(info.miner_type || csvName);
+        const hr = formatHashrate(info.theoretical_hash_rate || 0);
+        const watts = Math.round(info.avg_power_watts) || 0;
+
+        const minerData = {
+            name: csvName,
+            model: model || csvName,
+            type: 'ASIC',
+            algorithm: algo,
+            hashrate: hr.value,
+            hashrate_unit: hr.unit,
+            wattage: watts,
+            location_id: locationId,
+            quantity: 1,
+            purchase_price: 0,
+            purchase_date: '',
+            status: 'active',
+        };
+
+        try {
+            const addResp = await fetch('/api/miners', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(minerData),
+            });
+            if (addResp.ok) added++;
+        } catch (err) {
+            console.error('Failed to add miner', csvName, err);
+        }
+    }
+
+    showToast(`Added ${added} miner(s) to inventory`, 'success');
+    await loadDashboard();
+    loadPowerImportStatus();
+}
+
+async function uploadPowerCSV(input) {
+    const file = input.files[0];
+    if (!file) return;
+
+    document.getElementById('powerImportFileName').textContent = file.name;
+    const status = document.getElementById('powerImportStatus');
+    status.innerHTML = '<p style="color:var(--text-muted)">Uploading...</p>';
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const resp = await fetch('/api/power-import/upload', { method: 'POST', body: formData });
+        const result = await resp.json();
+        if (result.error) {
+            status.innerHTML = `<p style="color:var(--danger)">${esc(result.error)}</p>`;
+        } else {
+            status.innerHTML = `<p style="color:var(--success)">Imported ${result.imported} miners from ${result.report_days}-day report</p>`;
+            loadPowerImportStatus();
+            loadDashboard();
+        }
+    } catch (err) {
+        status.innerHTML = `<p style="color:var(--danger)">Upload failed: ${err.message}</p>`;
+    }
+    input.value = '';
+}
+
+async function clearPowerData() {
+    if (!confirm('Clear all imported power data? Calculations will revert to nameplate wattage.')) return;
+    try {
+        await fetch('/api/power-import/clear', { method: 'POST' });
+        showToast('Imported power data cleared', 'success');
+        loadPowerImportStatus();
+        loadDashboard();
+    } catch (err) {
+        showToast('Failed to clear power data', 'error');
+    }
 }

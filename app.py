@@ -9,6 +9,9 @@ from services.whattomine_service import WhatToMineService
 from services.hashrateno_service import HashrateNoService
 from services.miningnow_service import MiningNowService
 from services.profitability_engine import ProfitabilityEngine
+from services.power_import import (
+    import_power_csv, get_power_data, clear_power_data
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -138,7 +141,7 @@ def get_miner_profitability(miner_id):
             "electricity_cost_kwh": 0.10, "currency": "USD",
         }
     try:
-        data = engine.calculate_for_miner(miner, location)
+        data = engine.calculate_for_miner(miner, location, primary_only=False)
         return jsonify(data)
     except Exception as e:
         logger.error("Profitability calculation failed for %s: %s", miner_id, e)
@@ -166,6 +169,33 @@ def mn_models():
 def get_algorithms():
     """Return list of supported algorithms from coin_mappings."""
     return jsonify(list(engine.coin_mappings.keys()))
+
+
+# ---- CSV Power Import ----
+
+@app.route("/api/power-import/upload", methods=["POST"])
+def power_import():
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+    file = request.files["file"]
+    if not file.filename or not file.filename.endswith(".csv"):
+        return jsonify({"error": "Please upload a CSV file"}), 400
+    csv_content = file.read().decode("utf-8-sig")
+    result = import_power_csv(csv_content)
+    if "error" in result:
+        return jsonify(result), 400
+    return jsonify(result)
+
+
+@app.route("/api/power-import/data", methods=["GET"])
+def power_data():
+    return jsonify(get_power_data())
+
+
+@app.route("/api/power-import/clear", methods=["POST"])
+def power_clear():
+    clear_power_data()
+    return jsonify({"success": True})
 
 
 # ---- Cache management ----

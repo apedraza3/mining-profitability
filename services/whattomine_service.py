@@ -1,4 +1,3 @@
-import json
 import time
 import logging
 
@@ -9,18 +8,27 @@ import config
 
 logger = logging.getLogger(__name__)
 
-# Hashrate unit conversions to raw H/s for WhatToMine queries
-HASHRATE_MULTIPLIERS = {
-    "H/s": 1,
-    "KH/s": 1e3,
-    "MH/s": 1e6,
-    "GH/s": 1e9,
-    "TH/s": 1e12,
-    "PH/s": 1e15,
-    "EH/s": 1e18,
-    "Sol/s": 1,
-    "KSol/s": 1e3,
-}
+
+def _parse_dollar(val) -> float:
+    """Parse WhatToMine dollar strings like '$8.33' or '-$1.05' into floats."""
+    if val is None:
+        return 0.0
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).replace("$", "").replace(",", "").strip()
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+def _parse_float(val) -> float:
+    if val is None:
+        return 0.0
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return 0.0
 
 
 class WhatToMineService:
@@ -30,18 +38,40 @@ class WhatToMineService:
         self.ttl = config.WHATTOMINE_CACHE_TTL
         self._last_request_time = 0
 
+    _HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/131.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://whattomine.com/",
+    }
+
     def _throttled_get(self, url: str, params: dict = None) -> dict | None:
         elapsed = time.time() - self._last_request_time
         if elapsed < config.WHATTOMINE_REQUEST_DELAY:
             time.sleep(config.WHATTOMINE_REQUEST_DELAY - elapsed)
-        try:
-            resp = requests.get(url, params=params, timeout=15)
-            self._last_request_time = time.time()
-            resp.raise_for_status()
-            return resp.json()
-        except requests.RequestException as e:
-            logger.error("WhatToMine request failed: %s", e)
-            return None
+
+        for attempt in range(3):
+            try:
+                resp = requests.get(
+                    url, params=params, headers=self._HEADERS, timeout=15
+                )
+                self._last_request_time = time.time()
+                if resp.status_code == 403:
+                    wait = config.WHATTOMINE_REQUEST_DELAY * (attempt + 2)
+                    logger.warning("WhatToMine 403 (rate limit), waiting %.1fs...", wait)
+                    time.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                return resp.json()
+            except requests.RequestException as e:
+                logger.error("WhatToMine request failed: %s", e)
+                return None
+        logger.error("WhatToMine 403 persisted after retries: %s", url)
+        return None
 
     def get_coins_index(self) -> dict | None:
         """Fetch the full GPU-mineable coins list."""
@@ -72,16 +102,17 @@ class WhatToMineService:
         electricity_cost: float,
         pool_fee: float = 0.0,
     ) -> dict | None:
-        """Fetch profitability for a specific coin with custom miner params."""
-        raw_hr = hashrate * HASHRATE_MULTIPLIERS.get(hashrate_unit, 1)
-        cache_key = f"coin_{coin_id}_{raw_hr}_{wattage}_{electricity_cost}"
+        """Fetch profitability for a specific coin with custom miner params.
+        WhatToMine expects hashrate in the coin's display unit (TH/s for BTC,
+        MH/s for ETC, etc.) — pass the raw number directly, no conversion."""
+        cache_key = f"coin_{coin_id}_{hashrate}_{wattage}_{electricity_cost}"
         cached = self.cache.get(cache_key, self.ttl)
         if cached:
             return cached
 
         url = f"{self.base_url}/coins/{coin_id}.json"
         params = {
-            "hr": raw_hr,
+            "hr": hashrate,
             "p": wattage,
             "fee": pool_fee,
             "cost": electricity_cost,
@@ -95,13 +126,18 @@ class WhatToMineService:
         return data
 
     def get_profitability_for_miner(
-        self, miner: dict, location: dict, coin_mappings: dict
+        self, miner: dict, location: dict, coin_mappings: dict,
+        primary_only: bool = True,
     ) -> list[dict]:
-        """Query all relevant coins for a miner's algorithm, return sorted results."""
+        """Query relevant coins for a miner's algorithm, return sorted results.
+        If primary_only=True, only fetch the first (primary) coin to reduce API calls."""
         algorithm = miner.get("algorithm", "")
         coins = coin_mappings.get(algorithm, [])
         if not coins:
             return []
+
+        if primary_only:
+            coins = coins[:1]
 
         results = []
         for coin_info in coins:
@@ -120,12 +156,12 @@ class WhatToMineService:
                     "coin_name": data.get("name", coin_info["name"]),
                     "tag": data.get("tag", coin_info["tag"]),
                     "algorithm": data.get("algorithm", algorithm),
-                    "daily_revenue": float(data.get("revenue", 0) or 0),
-                    "daily_electricity": float(data.get("cost", 0) or 0),
-                    "daily_profit": float(data.get("profit", 0) or 0),
+                    "daily_revenue": _parse_dollar(data.get("revenue")),
+                    "daily_electricity": _parse_dollar(data.get("cost")),
+                    "daily_profit": _parse_dollar(data.get("profit")),
                     "estimated_rewards": data.get("estimated_rewards", "0"),
-                    "btc_revenue": float(data.get("btc_revenue", 0) or 0),
-                    "exchange_rate": float(data.get("exchange_rate", 0) or 0),
+                    "btc_revenue": _parse_float(data.get("btc_revenue")),
+                    "exchange_rate": _parse_float(data.get("exchange_rate")),
                     "difficulty": data.get("difficulty", 0),
                     "nethash": data.get("nethash", ""),
                 })
