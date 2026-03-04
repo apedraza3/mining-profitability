@@ -218,24 +218,7 @@ class ProfitabilityEngine:
             "source": "csv_import" if actual_watts else "nameplate",
         }
 
-        if miner.get("status") == "inactive":
-            return {
-                "miner": miner,
-                "location": location,
-                "power": power_info,
-                "sources": {
-                    "whattomine": {"available": False},
-                    "hashrateno": {"available": False},
-                    "miningnow": {"available": False},
-                },
-                "roi": self.calculate_roi(
-                    miner.get("purchase_price", 0),
-                    miner.get("quantity", 1),
-                    0,
-                    miner.get("purchase_date", ""),
-                ),
-                "status": "inactive",
-            }
+        is_inactive = miner.get("status") == "inactive"
 
         # Use effective watts for Hashrate.no electricity calc
         # WhatToMine calculates its own electricity from the wattage we send,
@@ -311,7 +294,7 @@ class ProfitabilityEngine:
             "daily_electricity": round(daily_electricity, 2),
             "best_daily_profit": round(best_daily, 2),
             "best_source": best_source,
-            "status": self._get_status(best_daily),
+            "status": "inactive" if is_inactive else self._get_status(best_daily),
         }
 
     def calculate_all(self) -> dict:
