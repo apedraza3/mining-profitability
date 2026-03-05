@@ -24,7 +24,18 @@
             .then(r => r.json())
             .then(data => {
                 dashboardData = data;
-                renderPoolComparison();
+                console.log('Pool page data loaded:', data.miners ? data.miners.length + ' miners' : 'no miners');
+                console.log('Algorithms:', data.miners ? data.miners.map(r => r.miner.algorithm).filter(Boolean) : []);
+                try {
+                    renderPoolComparison();
+                } catch(e) {
+                    console.error('renderPoolComparison error:', e);
+                    document.getElementById('poolComparisonContent').innerHTML = '<p style="color:var(--danger)">Error: ' + e.message + '</p>';
+                }
+            })
+            .catch(err => {
+                console.error('Fetch error:', err);
+                document.getElementById('poolComparisonContent').innerHTML = '<p style="color:var(--danger)">Failed to load data: ' + err.message + '</p>';
             });
     </script>
 {% endblock %}
