@@ -172,7 +172,6 @@ function renderMinerTable(minerResults) {
             <td>${m.type}</td>
             <td>${esc(m.algorithm)}</td>
             <td>${esc(loc.name || '--')}</td>
-            <td>$${(loc.electricity_cost_kwh || 0).toFixed(2)}</td>
             <td>${m.hashrate} ${m.hashrate_unit}</td>
             <td>${formatWatts(r.power)}</td>
             <td>${m.quantity || 1}</td>
@@ -204,7 +203,7 @@ function renderMinerTable(minerResults) {
     const totalTr = document.createElement('tr');
     totalTr.className = 'totals-row';
     totalTr.innerHTML = `
-        <td colspan="7" style="text-align:right;font-weight:700;">Totals</td>
+        <td colspan="6" style="text-align:right;font-weight:700;">Totals</td>
         <td style="font-weight:700;">${Math.round(totalWatts)}W</td>
         <td style="font-weight:700;">${totalQty}</td>
         <td style="font-weight:700;">${formatCurrency(totalRevenue)}</td>
@@ -241,7 +240,6 @@ function sortData(data) {
             case 'name': va = a.miner.name; vb = b.miner.name; break;
             case 'model': va = a.miner.model; vb = b.miner.model; break;
             case 'location': va = a.location.name || ''; vb = b.location.name || ''; break;
-            case 'elec_rate': va = a.location.electricity_cost_kwh || 0; vb = b.location.electricity_cost_kwh || 0; break;
             case 'revenue': va = a.daily_revenue || 0; vb = b.daily_revenue || 0; break;
             case 'electricity': va = a.daily_electricity || 0; vb = b.daily_electricity || 0; break;
             case 'best_profit': va = a.best_daily_profit || 0; vb = b.best_daily_profit || 0; break;
