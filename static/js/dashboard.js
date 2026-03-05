@@ -9,11 +9,15 @@ let autoRefreshInterval = null;
 
 // ---- Init ----
 document.addEventListener('DOMContentLoaded', () => {
+    // Only run full dashboard init on the main page
+    var autoRefreshEl = document.getElementById('autoRefreshToggle');
+    if (!autoRefreshEl) return;
+
     loadDashboard();
     loadLocations();
     loadAlgorithms();
 
-    document.getElementById('autoRefreshToggle').addEventListener('change', (e) => {
+    autoRefreshEl.addEventListener('change', (e) => {
         if (e.target.checked) {
             autoRefreshInterval = setInterval(loadDashboard, 30 * 60 * 1000);
         } else {

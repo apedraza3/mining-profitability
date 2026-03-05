@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Mining Profitability Dashboard{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/dashboard.css?v=7">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <!-- Nav -->
+    <nav class="tool-nav">
+        <a href="/" class="tool-nav-link {% if active_page == 'dashboard' %}active{% endif %}">Dashboard</a>
+        <a href="/swap" class="tool-nav-link {% if active_page == 'swap' %}active{% endif %}">Swap Calculator</a>
+        <a href="/pools" class="tool-nav-link {% if active_page == 'pools' %}active{% endif %}">Pool Comparison</a>
+        <a href="/optimizer" class="tool-nav-link {% if active_page == 'optimizer' %}active{% endif %}">Power Optimizer</a>
+        <a href="/difficulty" class="tool-nav-link {% if active_page == 'difficulty' %}active{% endif %}">Difficulty Trends</a>
+    </nav>
+
+    {% block content %}{% endblock %}
+
+    <!-- Loading overlay -->
+    <div class="loading-overlay" id="loadingOverlay" style="display:none;">
+        <div class="spinner"></div>
+        <p>Loading data...</p>
+    </div>
+
+    <script src="/static/js/dashboard.js?v=7"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

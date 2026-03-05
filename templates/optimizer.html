@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Power Optimizer - Mining Dashboard{% endblock %}
+
+{% block content %}
+    <div class="tool-page">
+        <div class="tool-page-header">
+            <h2>Power Capacity Optimizer</h2>
+            <p class="tool-desc">Enter your max wattage budget (e.g. circuit capacity) and see which miners to prioritize for maximum profit.</p>
+        </div>
+
+        <div class="analysis-panel">
+            <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;">
+                <label>Max Watts:</label>
+                <input type="number" id="powerBudgetWatts" min="0" step="100" placeholder="7200" style="width:120px;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);">
+                <button class="btn btn-primary" onclick="runPowerOptimizer()">Optimize</button>
+            </div>
+            <div id="powerOptimizerResult"></div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+    <script src="/static/js/analysis-tools.js?v=7"></script>
+{% endblock %}

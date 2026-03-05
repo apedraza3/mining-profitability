@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Difficulty Trends - Mining Dashboard{% endblock %}
+
+{% block content %}
+    <div class="tool-page">
+        <div class="tool-page-header">
+            <h2>Difficulty Trends</h2>
+            <p class="tool-desc">Track mining difficulty trends. Rising difficulty = shrinking profits.</p>
+        </div>
+
+        <div class="analysis-panel">
+            <div style="display:flex;gap:8px;margin-bottom:12px;">
+                <button class="btn btn-primary" onclick="loadDifficultyData('SHA-256')">SHA-256 (BTC)</button>
+                <button class="btn btn-secondary" onclick="loadDifficultyData('Scrypt')">Scrypt (LTC)</button>
+                <button class="btn btn-secondary" onclick="loadDifficultyData('Equihash')">Equihash (ZEC)</button>
+            </div>
+            <div id="difficultyChartContainer">
+                <p style="color:var(--text-muted)">Select an algorithm above to load difficulty data.</p>
+            </div>
+            <div id="difficultyInfo" style="margin-top:8px;font-size:0.85rem;"></div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+    <script src="/static/js/analysis-tools.js?v=7"></script>
+{% endblock %}

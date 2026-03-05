@@ -39,7 +39,27 @@ engine = ProfitabilityEngine(
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", active_page="dashboard")
+
+
+@app.route("/swap")
+def swap_page():
+    return render_template("swap.html", active_page="swap")
+
+
+@app.route("/pools")
+def pools_page():
+    return render_template("pools.html", active_page="pools")
+
+
+@app.route("/optimizer")
+def optimizer_page():
+    return render_template("optimizer.html", active_page="optimizer")
+
+
+@app.route("/difficulty")
+def difficulty_page():
+    return render_template("difficulty.html", active_page="difficulty")
 
 
 # ---- Miners API ----

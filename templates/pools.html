@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Pool Comparison - Mining Dashboard{% endblock %}
+
+{% block content %}
+    <div class="tool-page">
+        <div class="tool-page-header">
+            <h2>Pool Fee Comparison</h2>
+            <p class="tool-desc">Compare mining pool fees for your algorithms. Fee loss is based on your current daily revenue.</p>
+        </div>
+
+        <div class="analysis-panel">
+            <div id="poolComparisonContent">
+                <p style="color:var(--text-muted)">Loading pool data...</p>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+    <script src="/static/js/analysis-tools.js?v=7"></script>
+    <script>
+        dashboardData = null;
+        fetch('/api/profitability')
+            .then(r => r.json())
+            .then(data => {
+                dashboardData = data;
+                renderPoolComparison();
+            });
+    </script>
+{% endblock %}

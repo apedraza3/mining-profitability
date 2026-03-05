@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Swap Calculator - Mining Dashboard{% endblock %}
+
+{% block content %}
+    <div class="tool-page">
+        <div class="tool-page-header">
+            <h2>What-If Swap Calculator</h2>
+            <p class="tool-desc">Compare your current miner against a potential replacement to see if the upgrade is worth it.</p>
+        </div>
+
+        <div class="analysis-panel">
+            <div class="swap-form">
+                <div class="form-group" style="grid-column:span 2;">
+                    <label>Current Miner</label>
+                    <select id="swapCurrentMiner"></select>
+                </div>
+                <div class="form-group">
+                    <label>Replacement Model *</label>
+                    <input type="text" id="swapRepModel" placeholder="e.g. Antminer S21 XP">
+                </div>
+                <div class="form-group">
+                    <label>Algorithm</label>
+                    <select id="swapRepAlgo">
+                        <option value="SHA-256">SHA-256</option>
+                        <option value="Scrypt">Scrypt</option>
+                        <option value="Equihash">Equihash</option>
+                        <option value="KHeavyHash">KHeavyHash</option>
+                        <option value="Etchash">Etchash</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Hashrate *</label>
+                    <input type="number" id="swapRepHashrate" step="any" min="0" placeholder="270">
+                </div>
+                <div class="form-group">
+                    <label>Unit</label>
+                    <select id="swapRepUnit">
+                        <option value="TH/s">TH/s</option>
+                        <option value="GH/s">GH/s</option>
+                        <option value="MH/s">MH/s</option>
+                        <option value="KH/s">KH/s</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Wattage *</label>
+                    <input type="number" id="swapRepWattage" min="0" placeholder="3583">
+                </div>
+                <div class="form-group">
+                    <label>Purchase Price ($)</label>
+                    <input type="number" id="swapRepCost" step="0.01" min="0" placeholder="5500">
+                </div>
+                <div class="form-group">
+                    <label>Current Miner Resale ($)</label>
+                    <input type="number" id="swapResaleValue" step="0.01" min="0" placeholder="1000">
+                </div>
+                <div class="form-group" style="grid-column:span 2;">
+                    <button class="btn btn-primary" onclick="runSwapComparison()">Compare</button>
+                </div>
+            </div>
+            <div id="swapResult" style="margin-top:16px;"></div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+    <script src="/static/js/analysis-tools.js?v=7"></script>
+    <script>
+        // Load miner data for the dropdown
+        dashboardData = null;
+        fetch('/api/profitability')
+            .then(r => r.json())
+            .then(data => {
+                dashboardData = data;
+                populateSwapDropdown();
+            });
+    </script>
+{% endblock %}
