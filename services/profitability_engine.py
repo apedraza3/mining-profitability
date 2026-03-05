@@ -280,6 +280,10 @@ class ProfitabilityEngine:
             miner.get("purchase_date", ""),
         )
 
+        # Breakeven electricity rate: $/kWh at which this miner's profit = $0
+        daily_kwh = effective_watts * 24 / 1000
+        breakeven_elec_rate = round(daily_revenue / daily_kwh, 4) if daily_kwh > 0 and daily_revenue > 0 else 0
+
         return {
             "miner": miner,
             "location": location,
@@ -294,6 +298,7 @@ class ProfitabilityEngine:
             "daily_electricity": round(daily_electricity, 2),
             "best_daily_profit": round(best_daily, 2),
             "best_source": best_source,
+            "breakeven_elec_rate": breakeven_elec_rate,
             "status": "inactive" if is_inactive else self._get_status(best_daily),
         }
 
