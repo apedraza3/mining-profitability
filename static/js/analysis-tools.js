@@ -249,44 +249,76 @@ function renderPoolComparison() {
         revenueByAlgo[algo] += (r.daily_revenue || 0) * (r.miner.quantity || 1);
     });
 
+    // Build recommendations and tables per algo
+    var recommendations = [];
     var html = '';
     algos.forEach(algo => {
         var pools = POOL_DATA[algo];
         if (!pools) return;
 
         var dailyRev = revenueByAlgo[algo] || 0;
+
+        // Parse fees and find best pool (lowest effective fee)
+        var poolsWithFees = pools.map(p => {
+            var feeNum = 0;
+            var feeMatch = p.fee.match(/(\d+\.?\d*)%/);
+            if (feeMatch) feeNum = parseFloat(feeMatch[1]);
+            var feeMatch2 = p.fee.match(/(\d+\.?\d*)-(\d+\.?\d*)%/);
+            if (feeMatch2) feeNum = parseFloat(feeMatch2[2]);  // worst case for ranges
+            var lowestFee = feeNum;
+            if (feeMatch2) lowestFee = parseFloat(feeMatch2[1]);  // best case for ranges
+            return { pool: p, worstFee: feeNum, bestFee: lowestFee, dailyFee: dailyRev * (feeNum / 100), annualFee: dailyRev * (feeNum / 100) * 365 };
+        });
+
+        poolsWithFees.sort((a, b) => a.bestFee - b.bestFee);
+        var best = poolsWithFees[0];
+        var worst = poolsWithFees[poolsWithFees.length - 1];
+        var savings = worst.annualFee - best.annualFee;
+
+        recommendations.push({
+            algo: algo,
+            bestPool: best.pool.name,
+            bestFee: best.pool.fee,
+            bestPayout: best.pool.payout,
+            annualSaved: savings,
+            dailyRev: dailyRev,
+        });
+
         html += '<div class="pool-algo-section">';
         html += '<h4>' + algo + ' <span style="color:var(--text-muted);font-weight:400;font-size:0.85rem;">(' + formatCurrency(dailyRev) + '/day revenue)</span></h4>';
         html += '<table class="coin-table"><thead><tr>' +
             '<th>Pool</th><th>Fee</th><th>Payout</th><th>Min Payout</th><th>Est. Daily Fee Loss</th><th>Est. Annual Fee Loss</th><th>Notes</th>' +
             '</tr></thead><tbody>';
 
-        pools.forEach(p => {
-            // Parse fee for calculation (take the max fee for PPS)
-            var feeNum = 0;
-            var feeMatch = p.fee.match(/(\d+\.?\d*)%/);
-            if (feeMatch) feeNum = parseFloat(feeMatch[1]);
-            // For ranges like "1-4%", take PPS rate (higher)
-            var feeMatch2 = p.fee.match(/(\d+\.?\d*)-(\d+\.?\d*)%/);
-            if (feeMatch2) feeNum = parseFloat(feeMatch2[2]);  // worst case
-
-            var dailyFee = dailyRev * (feeNum / 100);
-            var annualFee = dailyFee * 365;
-
-            html += '<tr>' +
-                '<td><strong>' + esc(p.name) + '</strong></td>' +
+        poolsWithFees.forEach((pf, i) => {
+            var p = pf.pool;
+            var isBest = i === 0;
+            html += '<tr' + (isBest ? ' style="background:rgba(34,197,94,0.08);"' : '') + '>' +
+                '<td><strong>' + esc(p.name) + '</strong>' + (isBest ? ' <span style="color:var(--success);font-size:0.75rem;">BEST</span>' : '') + '</td>' +
                 '<td>' + esc(p.fee) + '</td>' +
                 '<td>' + esc(p.payout) + '</td>' +
                 '<td>' + esc(p.minPayout) + '</td>' +
-                '<td style="color:var(--profit-red)">' + (dailyFee > 0 ? formatCurrency(dailyFee) : '$0.00') + '</td>' +
-                '<td style="color:var(--profit-red)">' + (annualFee > 0 ? formatCurrency(annualFee) : '$0.00') + '</td>' +
+                '<td style="color:var(--profit-red)">' + (pf.dailyFee > 0 ? formatCurrency(pf.dailyFee) : '$0.00') + '</td>' +
+                '<td style="color:var(--profit-red)">' + (pf.annualFee > 0 ? formatCurrency(pf.annualFee) : '$0.00') + '</td>' +
                 '<td style="color:var(--text-muted);font-size:0.8rem;">' + esc(p.note) + '</td>' +
                 '</tr>';
         });
         html += '</tbody></table></div>';
     });
 
-    container.innerHTML = html || '<p style="color:var(--text-muted)">No pool data for your algorithms.</p>';
+    // Build recommendation banner at the top
+    var bannerHtml = '<div class="pool-recommendations">';
+    recommendations.forEach(rec => {
+        bannerHtml += '<div class="pool-rec-card">' +
+            '<div class="pool-rec-algo">' + esc(rec.algo) + '</div>' +
+            '<div class="pool-rec-name">' + esc(rec.bestPool) + '</div>' +
+            '<div class="pool-rec-detail">Fee: ' + esc(rec.bestFee) + '</div>' +
+            (rec.annualSaved > 0 ? '<div class="pool-rec-savings">Save up to <strong class="profit-positive">' + formatCurrency(rec.annualSaved) + '/yr</strong> vs worst pool</div>' : '<div class="pool-rec-savings">Already lowest fee</div>') +
+            '</div>';
+    });
+    bannerHtml += '</div>';
+
+    container.innerHTML = (bannerHtml + html) || '<p style="color:var(--text-muted)">No pool data for your algorithms.</p>';
 }
 
 // ---- Power Capacity Optimizer ----

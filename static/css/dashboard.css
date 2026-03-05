@@ -421,6 +421,18 @@ body {
 .swap-result-card { border-color: var(--primary); }
 
 /* Pool sections */
+.pool-recommendations {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px; margin-bottom: 16px;
+}
+.pool-rec-card {
+    background: var(--bg); border: 1px solid var(--success);
+    border-radius: var(--radius); padding: 12px;
+}
+.pool-rec-algo { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.pool-rec-name { font-size: 1.1rem; font-weight: 700; color: var(--success); margin: 4px 0; }
+.pool-rec-detail { font-size: 0.8rem; color: var(--text-muted); }
+.pool-rec-savings { font-size: 0.8rem; margin-top: 6px; }
 .pool-algo-section { margin-bottom: 16px; }
 .pool-algo-section h4 { font-size: 0.9rem; margin-bottom: 8px; }
 
