@@ -245,12 +245,13 @@ function sortData(data) {
             case 'revenue': va = a.daily_revenue || 0; vb = b.daily_revenue || 0; break;
             case 'electricity': va = a.daily_electricity || 0; vb = b.daily_electricity || 0; break;
             case 'best_profit': va = a.best_daily_profit || 0; vb = b.best_daily_profit || 0; break;
-            case 'profit_per_kw':
-                const aW = a.power ? a.power.effective_watts || a.power.nameplate_watts : a.miner.wattage || 0;
-                const bW = b.power ? b.power.effective_watts || b.power.nameplate_watts : b.miner.wattage || 0;
+            case 'profit_per_kw': {
+                let aW = a.power ? a.power.effective_watts || a.power.nameplate_watts : a.miner.wattage || 0;
+                let bW = b.power ? b.power.effective_watts || b.power.nameplate_watts : b.miner.wattage || 0;
                 va = aW > 0 ? ((a.best_daily_profit || 0) / aW) * 1000 : 0;
                 vb = bW > 0 ? ((b.best_daily_profit || 0) / bW) * 1000 : 0;
                 break;
+            }
             case 'roi_days':
                 va = a.roi && a.roi.days_to_roi > 0 ? a.roi.days_to_roi : 99999;
                 vb = b.roi && b.roi.days_to_roi > 0 ? b.roi.days_to_roi : 99999;
