@@ -161,8 +161,7 @@ function renderMinerTable(minerResults) {
         const hrn = r.sources.hashrateno;
         const mn = r.sources.miningnow;
         const best = r.best_daily_profit || 0;
-        const watts = r.power ? r.power.effective_watts || r.power.nameplate_watts : m.wattage || 0;
-        const profitPerKw = watts > 0 ? (best / watts) * 1000 : 0;
+        const profitPerKw = getProfitPerKw(r);
 
         const tr = document.createElement('tr');
         tr.className = r.status === expandedMinerId ? 'expanded' : '';
@@ -242,16 +241,11 @@ function sortData(data) {
             case 'name': va = a.miner.name; vb = b.miner.name; break;
             case 'model': va = a.miner.model; vb = b.miner.model; break;
             case 'location': va = a.location.name || ''; vb = b.location.name || ''; break;
+            case 'elec_rate': va = a.location.electricity_cost_kwh || 0; vb = b.location.electricity_cost_kwh || 0; break;
             case 'revenue': va = a.daily_revenue || 0; vb = b.daily_revenue || 0; break;
             case 'electricity': va = a.daily_electricity || 0; vb = b.daily_electricity || 0; break;
             case 'best_profit': va = a.best_daily_profit || 0; vb = b.best_daily_profit || 0; break;
-            case 'profit_per_kw': {
-                let aW = a.power ? a.power.effective_watts || a.power.nameplate_watts : a.miner.wattage || 0;
-                let bW = b.power ? b.power.effective_watts || b.power.nameplate_watts : b.miner.wattage || 0;
-                va = aW > 0 ? ((a.best_daily_profit || 0) / aW) * 1000 : 0;
-                vb = bW > 0 ? ((b.best_daily_profit || 0) / bW) * 1000 : 0;
-                break;
-            }
+            case 'profit_per_kw': va = getProfitPerKw(a); vb = getProfitPerKw(b); break;
             case 'roi_days':
                 va = a.roi && a.roi.days_to_roi > 0 ? a.roi.days_to_roi : 99999;
                 vb = b.roi && b.roi.days_to_roi > 0 ? b.roi.days_to_roi : 99999;
@@ -471,6 +465,11 @@ async function duplicateMiner(id) {
 }
 
 // ---- Helpers ----
+function getProfitPerKw(r) {
+    var w = r.power ? (r.power.effective_watts || r.power.nameplate_watts) : (r.miner.wattage || 0);
+    return w > 0 ? ((r.best_daily_profit || 0) / w) * 1000 : 0;
+}
+
 function formatCurrency(amount) {
     if (amount == null || isNaN(amount)) return '--';
     const prefix = amount < 0 ? '-$' : '$';
