@@ -1,6 +1,9 @@
 import logging
+import os
+from functools import wraps
 
-from flask import Flask, jsonify, render_template, request
+import bcrypt
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
 import config
 from services.cache_manager import CacheManager
@@ -18,6 +21,31 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+app.secret_key = os.getenv("SECRET_KEY", os.urandom(32))
+
+# --- Auth setup ---
+_password_hash = None
+if config.DASHBOARD_PASSWORD:
+    _password_hash = bcrypt.hashpw(
+        config.DASHBOARD_PASSWORD.encode("utf-8"), bcrypt.gensalt()
+    )
+
+
+def _auth_enabled():
+    return _password_hash is not None
+
+
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if _auth_enabled() and not session.get("authenticated"):
+            # For API routes return 401; for pages redirect to login
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "Authentication required"}), 401
+            return redirect(url_for("login", next=request.path))
+        return f(*args, **kwargs)
+    return decorated
+
 
 # Initialize services
 wtm_cache = CacheManager(str(config.CACHE_DIR / "whattomine"))
@@ -35,29 +63,63 @@ engine = ProfitabilityEngine(
 )
 
 
+# ---- Auth routes ----
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if not _auth_enabled():
+        return redirect("/")
+    error = None
+    if request.method == "POST":
+        username = request.form.get("username", "")
+        password = request.form.get("password", "")
+        if (
+            username == config.DASHBOARD_USERNAME
+            and bcrypt.checkpw(password.encode("utf-8"), _password_hash)
+        ):
+            session["authenticated"] = True
+            next_url = request.args.get("next", "/")
+            return redirect(next_url)
+        error = "Invalid username or password."
+    return render_template("login.html", error=error)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    if _auth_enabled():
+        return redirect(url_for("login"))
+    return redirect("/")
+
+
 # ---- Page routes ----
 
 @app.route("/")
+@login_required
 def index():
     return render_template("index.html", active_page="dashboard")
 
 
 @app.route("/swap")
+@login_required
 def swap_page():
     return render_template("swap.html", active_page="swap")
 
 
 @app.route("/pools")
+@login_required
 def pools_page():
     return render_template("pools.html", active_page="pools")
 
 
 @app.route("/optimizer")
+@login_required
 def optimizer_page():
     return render_template("optimizer.html", active_page="optimizer")
 
 
 @app.route("/difficulty")
+@login_required
 def difficulty_page():
     return render_template("difficulty.html", active_page="difficulty")
 
@@ -65,11 +127,13 @@ def difficulty_page():
 # ---- Miners API ----
 
 @app.route("/api/miners", methods=["GET"])
+@login_required
 def list_miners():
     return jsonify(inventory_mgr.get_all_miners())
 
 
 @app.route("/api/miners", methods=["POST"])
+@login_required
 def add_miner():
     data = request.get_json()
     if not data:
@@ -79,6 +143,7 @@ def add_miner():
 
 
 @app.route("/api/miners/<miner_id>", methods=["PUT"])
+@login_required
 def update_miner(miner_id):
     data = request.get_json()
     if not data:
@@ -90,6 +155,7 @@ def update_miner(miner_id):
 
 
 @app.route("/api/miners/<miner_id>", methods=["DELETE"])
+@login_required
 def delete_miner(miner_id):
     if inventory_mgr.delete_miner(miner_id):
         return jsonify({"success": True})
@@ -97,6 +163,7 @@ def delete_miner(miner_id):
 
 
 @app.route("/api/miners/<miner_id>/duplicate", methods=["POST"])
+@login_required
 def duplicate_miner(miner_id):
     miner = inventory_mgr.duplicate_miner(miner_id)
     if miner is None:
@@ -107,11 +174,13 @@ def duplicate_miner(miner_id):
 # ---- Locations API ----
 
 @app.route("/api/locations", methods=["GET"])
+@login_required
 def list_locations():
     return jsonify(inventory_mgr.get_all_locations())
 
 
 @app.route("/api/locations", methods=["POST"])
+@login_required
 def add_location():
     data = request.get_json()
     if not data:
@@ -121,6 +190,7 @@ def add_location():
 
 
 @app.route("/api/locations/<location_id>", methods=["PUT"])
+@login_required
 def update_location(location_id):
     data = request.get_json()
     if not data:
@@ -132,6 +202,7 @@ def update_location(location_id):
 
 
 @app.route("/api/locations/<location_id>", methods=["DELETE"])
+@login_required
 def delete_location(location_id):
     if inventory_mgr.delete_location(location_id):
         return jsonify({"success": True})
@@ -141,6 +212,7 @@ def delete_location(location_id):
 # ---- Profitability API ----
 
 @app.route("/api/profitability", methods=["GET"])
+@login_required
 def get_profitability():
     try:
         data = engine.calculate_all()
@@ -151,6 +223,7 @@ def get_profitability():
 
 
 @app.route("/api/profitability/<miner_id>", methods=["GET"])
+@login_required
 def get_miner_profitability(miner_id):
     miner = inventory_mgr.get_miner(miner_id)
     if not miner:
@@ -172,21 +245,25 @@ def get_miner_profitability(miner_id):
 # ---- Data source helpers ----
 
 @app.route("/api/sources/whattomine/coins", methods=["GET"])
+@login_required
 def wtm_coins():
     return jsonify(whattomine_svc.get_all_coin_names())
 
 
 @app.route("/api/sources/hashrateno/models", methods=["GET"])
+@login_required
 def hrn_models():
     return jsonify(hashrateno_svc.get_all_model_names())
 
 
 @app.route("/api/sources/miningnow/models", methods=["GET"])
+@login_required
 def mn_models():
     return jsonify(miningnow_svc.get_all_model_names())
 
 
 @app.route("/api/algorithms", methods=["GET"])
+@login_required
 def get_algorithms():
     """Return list of supported algorithms from coin_mappings."""
     return jsonify(list(engine.coin_mappings.keys()))
@@ -195,6 +272,7 @@ def get_algorithms():
 # ---- CSV Power Import ----
 
 @app.route("/api/power-import/upload", methods=["POST"])
+@login_required
 def power_import():
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
@@ -209,11 +287,13 @@ def power_import():
 
 
 @app.route("/api/power-import/data", methods=["GET"])
+@login_required
 def power_data():
     return jsonify(get_power_data())
 
 
 @app.route("/api/power-import/clear", methods=["POST"])
+@login_required
 def power_clear():
     clear_power_data()
     return jsonify({"success": True})
@@ -222,6 +302,7 @@ def power_clear():
 # ---- Cache management ----
 
 @app.route("/api/cache/refresh", methods=["POST"])
+@login_required
 def refresh_all_caches():
     wtm_cache.invalidate_all()
     hrn_cache.invalidate_all()
@@ -230,6 +311,7 @@ def refresh_all_caches():
 
 
 @app.route("/api/cache/refresh/<source>", methods=["POST"])
+@login_required
 def refresh_source_cache(source):
     caches = {
         "whattomine": wtm_cache,
@@ -244,6 +326,7 @@ def refresh_source_cache(source):
 
 
 @app.route("/api/cache/status", methods=["GET"])
+@login_required
 def cache_status():
     return jsonify({
         "whattomine": {
@@ -265,6 +348,7 @@ def cache_status():
 # ---- Analysis Tools API ----
 
 @app.route("/api/tools/swap-compare", methods=["POST"])
+@login_required
 def swap_compare():
     """Compare current miner vs a hypothetical replacement."""
     data = request.get_json()
@@ -344,6 +428,7 @@ def swap_compare():
 
 
 @app.route("/api/tools/power-optimize", methods=["POST"])
+@login_required
 def power_optimize():
     """Find optimal miner combination within a wattage budget."""
     data = request.get_json()
@@ -407,6 +492,7 @@ def power_optimize():
 
 
 @app.route("/api/tools/difficulty", methods=["GET"])
+@login_required
 def difficulty_history():
     """Fetch difficulty history from free APIs."""
     import requests as req

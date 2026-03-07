@@ -71,6 +71,10 @@ HASHRATENO_REFERENCE_SPECS = {
 PROFITABLE_THRESHOLD = 1.00       # >= $1/day = green
 MARGINAL_THRESHOLD = 0.00         # >= $0/day = yellow, < $0/day = red
 
+# Auth
+DASHBOARD_USERNAME = os.getenv("DASHBOARD_USERNAME", "admin")
+DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "")  # blank = auth disabled
+
 # Flask
 FLASK_HOST = os.getenv("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.getenv("FLASK_PORT", "5000"))

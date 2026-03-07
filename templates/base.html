@@ -15,6 +15,9 @@
         <a href="/pools" class="tool-nav-link {% if active_page == 'pools' %}active{% endif %}">Pool Comparison</a>
         <a href="/optimizer" class="tool-nav-link {% if active_page == 'optimizer' %}active{% endif %}">Power Optimizer</a>
         <a href="/difficulty" class="tool-nav-link {% if active_page == 'difficulty' %}active{% endif %}">Difficulty Trends</a>
+        {% if session.get('authenticated') %}
+        <a href="/logout" class="tool-nav-link" style="margin-left:auto;">Logout</a>
+        {% endif %}
     </nav>
 
     {% block content %}{% endblock %}
