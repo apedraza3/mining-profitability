@@ -85,16 +85,15 @@
                 <thead>
                     <tr>
                         <th class="sortable" data-col="name" onclick="sortTable('name')">Miner</th>
-                        <th class="sortable" data-col="model" onclick="sortTable('model')">Model</th>
                         <th>Type</th>
                         <th>Algo</th>
                         <th class="sortable" data-col="location" onclick="sortTable('location')">Location</th>
                         <th>Hashrate</th>
                         <th>Watts</th>
                         <th>Qty</th>
-                        <th class="sortable" data-col="revenue" onclick="sortTable('revenue')" title="Daily mining revenue before electricity costs">Revenue</th>
                         <th class="sortable" data-col="electricity" onclick="sortTable('electricity')" title="Daily electricity cost based on wattage and $/kWh">Elec. Cost</th>
-                        <th class="sortable best-profit-col" data-col="best_profit" onclick="sortTable('best_profit')" title="Daily profit after electricity — revenue minus elec. cost">Daily Profit</th>
+                        <th class="sortable best-profit-col" data-col="best_profit" onclick="sortTable('best_profit')" title="Expected daily profit based on rated hashrate">Expected</th>
+                        <th class="sortable" data-col="actual_profit" onclick="sortTable('actual_profit')" title="Actual daily profit based on PowerPool real-time hashrate">Actual</th>
                         <th class="sortable" data-col="profit_per_kw" onclick="sortTable('profit_per_kw')" title="Daily profit per kilowatt — higher is more efficient">$/kW</th>
                         <th class="sortable" data-col="roi_days" onclick="sortTable('roi_days')" title="Days until purchase price is paid back">ROI</th>
                         <th>Status</th>

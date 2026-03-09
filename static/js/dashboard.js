@@ -194,28 +194,35 @@ function renderMinerTable(minerResults) {
     filtered.forEach(r => {
         const m = r.miner;
         const loc = r.location;
-        const wtm = r.sources.whattomine;
-        const hrn = r.sources.hashrateno;
-        const mn = r.sources.miningnow;
         const best = r.best_daily_profit || 0;
         const profitPerKw = getProfitPerKw(r);
+        const actualProfit = getActualProfit(r);
 
         const tr = document.createElement('tr');
         tr.className = r.status === expandedMinerId ? 'expanded' : '';
         tr.onclick = () => openDetailPanel(r);
         var poolCell = renderPoolCell(m.id);
+
+        var actualCell;
+        if (actualProfit === 'offline') {
+            actualCell = '<span class="pool-offline" style="font-size:0.8rem;">Offline</span>';
+        } else if (actualProfit != null) {
+            actualCell = `<strong class="${profitClass(actualProfit)}">${formatCurrency(actualProfit)}</strong>`;
+        } else {
+            actualCell = '<span style="color:var(--text-muted)">--</span>';
+        }
+
         tr.innerHTML = `
             <td>${esc(m.name)}</td>
-            <td>${esc(m.model)}</td>
             <td>${m.type}</td>
             <td>${esc(m.algorithm)}</td>
             <td>${esc(loc.name || '--')}</td>
             <td>${m.hashrate} ${m.hashrate_unit}</td>
             <td>${formatWatts(r.power)}</td>
             <td>${m.quantity || 1}</td>
-            <td>${formatCurrency(r.daily_revenue)}</td>
             <td style="color:var(--profit-red)">${formatCurrency(r.daily_electricity)}</td>
             <td class="best-profit ${profitClass(best)}"><strong>${formatCurrency(best)}</strong></td>
+            <td>${actualCell}</td>
             <td class="${profitClass(profitPerKw)}">${formatCurrency(profitPerKw)}</td>
             <td>${r.roi && r.roi.days_to_roi > 0 ? r.roi.days_to_roi + 'd' : '--'}</td>
             <td><span class="status-badge status-${r.status}">${r.status}</span></td>
@@ -230,24 +237,29 @@ function renderMinerTable(minerResults) {
     });
 
     // Totals row
-    let totalWatts = 0, totalQty = 0, totalRevenue = 0, totalElec = 0, totalProfit = 0;
+    let totalWatts = 0, totalQty = 0, totalElec = 0, totalProfit = 0;
+    let totalActualProfit = 0, hasAnyActual = false;
     filtered.forEach(r => {
         const qty = r.miner.quantity || 1;
         totalWatts += (r.power ? r.power.effective_watts || r.power.nameplate_watts : r.miner.wattage || 0) * qty;
         totalQty += qty;
-        totalRevenue += (r.daily_revenue || 0) * qty;
         totalElec += (r.daily_electricity || 0) * qty;
         totalProfit += (r.best_daily_profit || 0) * qty;
+        const actual = getActualProfit(r);
+        if (typeof actual === 'number') {
+            totalActualProfit += actual * qty;
+            hasAnyActual = true;
+        }
     });
     const totalTr = document.createElement('tr');
     totalTr.className = 'totals-row';
     totalTr.innerHTML = `
-        <td colspan="6" style="text-align:right;font-weight:700;">Totals</td>
+        <td colspan="5" style="text-align:right;font-weight:700;">Totals</td>
         <td style="font-weight:700;">${Math.round(totalWatts)}W</td>
         <td style="font-weight:700;">${totalQty}</td>
-        <td style="font-weight:700;">${formatCurrency(totalRevenue)}</td>
         <td style="font-weight:700;color:var(--profit-red)">${formatCurrency(totalElec)}</td>
         <td class="best-profit ${profitClass(totalProfit)}" style="font-weight:700;">${formatCurrency(totalProfit)}</td>
+        <td class="${hasAnyActual ? profitClass(totalActualProfit) : ''}" style="font-weight:700;">${hasAnyActual ? formatCurrency(totalActualProfit) : '--'}</td>
         <td style="font-weight:700;" class="${profitClass(totalWatts > 0 ? (totalProfit / totalWatts) * 1000 : 0)}">${totalWatts > 0 ? formatCurrency((totalProfit / totalWatts) * 1000) : '--'}</td>
         <td colspan="4"></td>
     `;
@@ -277,11 +289,15 @@ function sortData(data) {
         let va, vb;
         switch (sortColumn) {
             case 'name': va = a.miner.name; vb = b.miner.name; break;
-            case 'model': va = a.miner.model; vb = b.miner.model; break;
             case 'location': va = a.location.name || ''; vb = b.location.name || ''; break;
-            case 'revenue': va = a.daily_revenue || 0; vb = b.daily_revenue || 0; break;
             case 'electricity': va = a.daily_electricity || 0; vb = b.daily_electricity || 0; break;
             case 'best_profit': va = a.best_daily_profit || 0; vb = b.best_daily_profit || 0; break;
+            case 'actual_profit':
+                va = getActualProfit(a);
+                vb = getActualProfit(b);
+                va = typeof va === 'number' ? va : -99999;
+                vb = typeof vb === 'number' ? vb : -99999;
+                break;
             case 'profit_per_kw': va = getProfitPerKw(a); vb = getProfitPerKw(b); break;
             case 'roi_days':
                 va = a.roi && a.roi.days_to_roi > 0 ? a.roi.days_to_roi : 99999;
@@ -529,6 +545,30 @@ function esc(str) {
 
 function showLoading(show) {
     document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none';
+}
+
+function hashToBase(value, unit) {
+    if (!value || !unit) return 0;
+    const multipliers = {
+        'H/s': 1, 'KH/s': 1e3, 'MH/s': 1e6, 'GH/s': 1e9, 'TH/s': 1e12, 'PH/s': 1e15,
+        'Sol/s': 1, 'KSol/s': 1e3, 'MSol/s': 1e6, 'GSol/s': 1e9,
+    };
+    return value * (multipliers[unit] || 1);
+}
+
+function getActualProfit(r) {
+    if (!poolData || !poolData.statuses) return null;
+    var w = poolData.statuses[r.miner.id];
+    if (!w) return null;
+    if (!w.online) return 'offline';
+
+    var poolHashBase = hashToBase(w.hashrate, w.hashrate_units);
+    var ratedHashBase = hashToBase(r.miner.hashrate, r.miner.hashrate_unit);
+    if (ratedHashBase <= 0) return null;
+
+    var ratio = poolHashBase / ratedHashBase;
+    var actualRevenue = (r.daily_revenue || 0) * ratio;
+    return actualRevenue - (r.daily_electricity || 0);
 }
 
 function renderPoolCell(minerId) {

@@ -93,29 +93,21 @@ class WhatToMineService:
             self.cache.set("asic_index", data)
         return data
 
-    def get_coin_profitability(
-        self,
-        coin_id: int,
-        hashrate: float,
-        hashrate_unit: str,
-        wattage: int,
-        electricity_cost: float,
-        pool_fee: float = 0.0,
-    ) -> dict | None:
-        """Fetch profitability for a specific coin with custom miner params.
-        WhatToMine expects hashrate in the coin's display unit (TH/s for BTC,
-        MH/s for ETC, etc.) — pass the raw number directly, no conversion."""
-        cache_key = f"coin_{coin_id}_{hashrate}_{wattage}_{electricity_cost}"
+    def get_coin_reference_data(self, coin_id: int) -> dict | None:
+        """Fetch reference data for a coin with hr=1, p=0, cost=0.
+        Revenue scales linearly with hashrate, so we cache once per coin
+        instead of once per miner — dramatically reduces API calls."""
+        cache_key = f"coin_ref_{coin_id}"
         cached = self.cache.get(cache_key, self.ttl)
         if cached:
             return cached
 
         url = f"{self.base_url}/coins/{coin_id}.json"
         params = {
-            "hr": hashrate,
-            "p": wattage,
-            "fee": pool_fee,
-            "cost": electricity_cost,
+            "hr": 1,
+            "p": 0,
+            "fee": 0,
+            "cost": 0,
             "cost_currency": "USD",
             "hcost": 0.0,
             "span": "24h",
@@ -130,7 +122,7 @@ class WhatToMineService:
         primary_only: bool = True,
     ) -> list[dict]:
         """Query relevant coins for a miner's algorithm, return sorted results.
-        If primary_only=True, only fetch the first (primary) coin to reduce API calls."""
+        Uses reference caching: fetches once per coin (hr=1), scales per miner."""
         algorithm = miner.get("algorithm", "")
         coins = coin_mappings.get(algorithm, [])
         if not coins:
@@ -139,31 +131,41 @@ class WhatToMineService:
         if primary_only:
             coins = coins[:1]
 
+        hashrate = miner.get("hashrate", 0)
+        wattage = miner.get("wattage", 0)
+        elec_cost = location.get("electricity_cost_kwh", 0.10)
+
         results = []
         for coin_info in coins:
             coin_id = coin_info["coin_id"]
-            data = self.get_coin_profitability(
-                coin_id=coin_id,
-                hashrate=miner["hashrate"],
-                hashrate_unit=miner["hashrate_unit"],
-                wattage=miner["wattage"],
-                electricity_cost=location["electricity_cost_kwh"],
-                pool_fee=0.0,
-            )
-            if data and "revenue" in data:
+            ref = self.get_coin_reference_data(coin_id)
+            if ref and "revenue" in ref:
+                ref_revenue = _parse_dollar(ref.get("revenue"))
+                daily_revenue = ref_revenue * hashrate
+                daily_electricity = (wattage * 24 / 1000) * elec_cost
+                daily_profit = daily_revenue - daily_electricity
+
+                ref_rewards = ref.get("estimated_rewards", "0")
+                try:
+                    scaled_rewards = str(round(float(ref_rewards) * hashrate, 8))
+                except (ValueError, TypeError):
+                    scaled_rewards = "0"
+
                 results.append({
                     "coin_id": coin_id,
-                    "coin_name": data.get("name", coin_info["name"]),
-                    "tag": data.get("tag", coin_info["tag"]),
-                    "algorithm": data.get("algorithm", algorithm),
-                    "daily_revenue": _parse_dollar(data.get("revenue")),
-                    "daily_electricity": _parse_dollar(data.get("cost")),
-                    "daily_profit": _parse_dollar(data.get("profit")),
-                    "estimated_rewards": data.get("estimated_rewards", "0"),
-                    "btc_revenue": _parse_float(data.get("btc_revenue")),
-                    "exchange_rate": _parse_float(data.get("exchange_rate")),
-                    "difficulty": data.get("difficulty", 0),
-                    "nethash": data.get("nethash", ""),
+                    "coin_name": ref.get("name", coin_info["name"]),
+                    "tag": ref.get("tag", coin_info["tag"]),
+                    "algorithm": ref.get("algorithm", algorithm),
+                    "daily_revenue": round(daily_revenue, 4),
+                    "daily_electricity": round(daily_electricity, 4),
+                    "daily_profit": round(daily_profit, 4),
+                    "estimated_rewards": scaled_rewards,
+                    "btc_revenue": round(
+                        _parse_float(ref.get("btc_revenue")) * hashrate, 8
+                    ),
+                    "exchange_rate": _parse_float(ref.get("exchange_rate")),
+                    "difficulty": ref.get("difficulty", 0),
+                    "nethash": ref.get("nethash", ""),
                 })
 
         results.sort(key=lambda x: x["daily_profit"], reverse=True)
