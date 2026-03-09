@@ -355,7 +355,7 @@ body {
 /* Locations modal */
 .locations-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
 .location-row {
-    display: grid; grid-template-columns: 1fr 120px 60px; gap: 8px;
+    display: grid; grid-template-columns: 1fr 100px 110px 40px; gap: 8px;
     align-items: center;
 }
 .location-row input {
@@ -501,6 +501,90 @@ body {
 .pool-online { color: var(--success); }
 .pool-offline { color: var(--danger); }
 
+/* Dynamic summary card count (5 or 6 cards when fleet/solar visible) */
+.summary-strip.has-extra {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+/* Coin Switch Alert Banner */
+.alert-banner {
+    margin: 0 24px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.alert-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: rgba(234, 179, 8, 0.1);
+    border: 1px solid rgba(234, 179, 8, 0.3);
+    border-radius: var(--radius);
+    font-size: 0.85rem;
+}
+.alert-icon {
+    font-size: 1.1rem;
+    flex-shrink: 0;
+}
+.alert-item strong {
+    color: var(--warning);
+}
+.alert-dismiss {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 0 4px;
+}
+.alert-dismiss:hover {
+    color: var(--text);
+}
+
+/* Profit History Section */
+.history-section {
+    margin: 0 24px 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+.history-section .section-header {
+    padding: 12px 16px;
+}
+.history-section .section-header h3 {
+    font-size: 0.95rem;
+}
+.history-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 16px 12px;
+}
+.history-controls select {
+    padding: 5px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 0.8rem;
+}
+.history-chart-wrap {
+    padding: 0 16px 16px;
+    max-height: 350px;
+}
+.history-chart-wrap canvas {
+    max-height: 320px;
+}
+
+/* Uptime display in pool cell */
+.pool-uptime {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
 /* Responsive */
 @media (max-width: 1024px) {
     .summary-strip { grid-template-columns: repeat(2, 1fr); }
@@ -510,7 +594,10 @@ body {
 @media (max-width: 640px) {
     .header { padding: 12px 16px; }
     .summary-strip { grid-template-columns: 1fr; padding: 12px 16px; }
+    .summary-strip.has-extra { grid-template-columns: 1fr; }
     .table-section { padding: 0 16px 16px; }
     .form-grid { grid-template-columns: 1fr; }
     .form-row { flex-direction: column; grid-column: span 1; }
+    .alert-banner { margin: 0 16px 12px; }
+    .history-section { margin: 0 16px 16px; }
 }

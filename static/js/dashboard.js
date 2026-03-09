@@ -3,6 +3,8 @@ let dashboardData = null;
 let miners = [];
 let locations = [];
 let poolData = null;
+let uptimeData = null;
+let profitHistoryChart = null;
 let sortColumn = 'best_profit';
 let sortDirection = 'desc';
 let expandedMinerId = null;
@@ -19,6 +21,9 @@ document.addEventListener('DOMContentLoaded', () => {
     loadLocations();
     loadAlgorithms();
     loadPoolStatus();
+    loadCoinSwitchAlerts();
+    loadProfitHistory();
+    loadUptimeStats();
     // Refresh pool status every 2 minutes
     poolRefreshInterval = setInterval(loadPoolStatus, 2 * 60 * 1000);
 
@@ -89,6 +94,7 @@ async function loadPoolStatus() {
         poolData = await resp.json();
         // Re-render table if dashboard data exists to update pool column
         if (dashboardData) renderMinerTable(dashboardData.miners);
+        updateFleetHealth();
         // Update PP source indicator
         var ppDot = document.querySelector('.source-dot[data-source="powerpool"]');
         if (ppDot && poolData.configured) {
@@ -125,8 +131,9 @@ async function refreshData() {
 // ---- Rendering ----
 function renderSummary(summary) {
     if (!summary) return;
-    const dp = summary.total_daily_profit;
-    const mp = summary.total_monthly_profit;
+    var hasSolar = summary.total_solar_savings > 0;
+    var dp = hasSolar ? summary.total_solar_profit : summary.total_daily_profit;
+    var mp = dp * 30;
 
     setProfit('totalDailyProfit', dp);
     setProfit('totalMonthlyProfit', mp);
@@ -137,6 +144,19 @@ function renderSummary(summary) {
         `${summary.profitable_count} / ${summary.unprofitable_count}`;
     document.getElementById('minerCountsSub').textContent =
         `profitable / unprofitable (${summary.marginal_count} marginal)`;
+
+    // Solar savings display
+    var solarEl = document.getElementById('solarSavingsCard');
+    if (solarEl) {
+        if (hasSolar) {
+            solarEl.style.display = '';
+            document.getElementById('solarDailySavings').textContent = formatCurrency(summary.total_solar_savings);
+            document.getElementById('solarMonthlySavings').textContent = formatCurrency(summary.total_solar_savings * 30) + '/mo';
+        } else {
+            solarEl.style.display = 'none';
+        }
+    }
+    updateSummaryStripLayout();
 }
 
 function setProfit(elementId, value) {
@@ -156,10 +176,15 @@ function renderLocationBreakdown(byLocation) {
     for (const [name, data] of Object.entries(byLocation)) {
         const card = document.createElement('div');
         card.className = 'location-card';
+        var solarDetail = '';
+        if (data.solar_daily_kwh > 0) {
+            var offsetPct = Math.round(data.solar_offset_pct * 100);
+            solarDetail = ` &middot; <span style="color:var(--success)" title="${data.solar_daily_kwh} kWh/day solar">&#9728; ${offsetPct}% offset</span>`;
+        }
         card.innerHTML = `
             <div class="location-info">
                 <span class="location-name">${esc(name)}</span>
-                <span class="location-detail">${data.units} units &middot; $${data.electricity_cost_kwh}/kWh</span>
+                <span class="location-detail">${data.units} units &middot; $${data.electricity_cost_kwh}/kWh${solarDetail}</span>
             </div>
             <span class="location-profit ${data.daily_profit >= 0 ? 'profit-positive' : 'profit-negative'}">
                 ${formatCurrency(data.daily_profit)}/day
@@ -212,6 +237,18 @@ function renderMinerTable(minerResults) {
             actualCell = '<span style="color:var(--text-muted)">--</span>';
         }
 
+        var elecCell;
+        var solar = r.solar || {};
+        if (solar.daily_electricity != null && solar.offset_pct > 0) {
+            var offsetPct = Math.round(solar.offset_pct * 100);
+            elecCell = `<span title="Base: ${formatCurrency(r.daily_electricity)} | Solar saves ${formatCurrency(solar.daily_savings)}/day (${offsetPct}% offset)" style="color:var(--success);border-bottom:1px dotted var(--success)">${formatCurrency(solar.daily_electricity)}</span>`;
+        } else {
+            elecCell = `<span style="color:var(--profit-red)">${formatCurrency(r.daily_electricity)}</span>`;
+        }
+
+        // Use solar-adjusted profit for expected if available
+        var expectedProfit = (solar.daily_profit != null && solar.offset_pct > 0) ? solar.daily_profit : best;
+
         tr.innerHTML = `
             <td>${esc(m.name)}</td>
             <td>${m.type}</td>
@@ -220,8 +257,8 @@ function renderMinerTable(minerResults) {
             <td>${m.hashrate} ${m.hashrate_unit}</td>
             <td>${formatWatts(r.power)}</td>
             <td>${m.quantity || 1}</td>
-            <td style="color:var(--profit-red)">${formatCurrency(r.daily_electricity)}</td>
-            <td class="best-profit ${profitClass(best)}"><strong>${formatCurrency(best)}</strong></td>
+            <td>${elecCell}</td>
+            <td class="best-profit ${profitClass(expectedProfit)}"><strong>${formatCurrency(expectedProfit)}</strong></td>
             <td>${actualCell}</td>
             <td class="${profitClass(profitPerKw)}">${formatCurrency(profitPerKw)}</td>
             <td>${r.roi && r.roi.days_to_roi > 0 ? r.roi.days_to_roi + 'd' : '--'}</td>
@@ -568,19 +605,28 @@ function getActualProfit(r) {
 
     var ratio = poolHashBase / ratedHashBase;
     var actualRevenue = (r.daily_revenue || 0) * ratio;
-    return actualRevenue - (r.daily_electricity || 0);
+    // Use solar-adjusted electricity if available
+    var solar = r.solar || {};
+    var elec = (solar.daily_electricity != null && solar.offset_pct > 0) ? solar.daily_electricity : (r.daily_electricity || 0);
+    return actualRevenue - elec;
 }
 
 function renderPoolCell(minerId) {
     if (!poolData || !poolData.statuses) return '<span style="color:var(--text-muted);font-size:0.75rem;">--</span>';
     var w = poolData.statuses[minerId];
     if (!w) return '<span style="color:var(--text-muted);font-size:0.75rem;">--</span>';
+    var uptimeSuffix = '';
+    if (uptimeData && uptimeData[minerId]) {
+        var pct = uptimeData[minerId].uptime_pct;
+        var uptimeClass = pct >= 99 ? 'profit-positive' : pct >= 95 ? 'profit-neutral' : 'profit-negative';
+        uptimeSuffix = '<br><span class="' + uptimeClass + '" style="font-size:0.65rem;">' + pct + '% uptime</span>';
+    }
     if (w.online) {
         return '<span class="pool-status pool-online" title="' + esc(w.worker_name) + ' - ' + w.hashrate + ' ' + w.hashrate_units + '">' +
-            '<span class="pool-dot online"></span> ' + w.hashrate + ' ' + w.hashrate_units + '</span>';
+            '<span class="pool-dot online"></span> ' + w.hashrate + ' ' + w.hashrate_units + '</span>' + uptimeSuffix;
     } else {
         return '<span class="pool-status pool-offline" title="' + esc(w.worker_name) + ' - OFFLINE">' +
-            '<span class="pool-dot offline"></span> Offline</span>';
+            '<span class="pool-dot offline"></span> Offline</span>' + uptimeSuffix;
     }
 }
 
@@ -832,5 +878,190 @@ async function clearPowerData() {
         loadDashboard();
     } catch (err) {
         showToast('Failed to clear power data', 'error');
+    }
+}
+
+// ---- Fleet Health ----
+function updateFleetHealth() {
+    const card = document.getElementById('fleetHealthCard');
+    if (!poolData || !poolData.statuses || !dashboardData) {
+        if (card) card.style.display = 'none';
+        return;
+    }
+    card.style.display = 'block';
+
+    const statuses = Object.values(poolData.statuses);
+    const onlineCount = statuses.filter(s => s.online).length;
+    const totalMatched = statuses.length;
+
+    document.getElementById('fleetOnlineCount').textContent = `${onlineCount}/${totalMatched} Online`;
+    document.getElementById('fleetOnlineCount').className = 'summary-value ' +
+        (onlineCount === totalMatched ? 'profit-positive' : onlineCount > 0 ? 'profit-neutral' : 'profit-negative');
+
+    // Hashrate efficiency: sum(actual) / sum(rated) for matched miners
+    let totalActual = 0, totalRated = 0;
+    dashboardData.miners.forEach(r => {
+        const w = poolData.statuses[r.miner.id];
+        if (w && w.online) {
+            totalActual += hashToBase(w.hashrate, w.hashrate_units);
+            totalRated += hashToBase(r.miner.hashrate, r.miner.hashrate_unit);
+        }
+    });
+    const eff = totalRated > 0 ? Math.round(totalActual / totalRated * 100) : 0;
+    document.getElementById('fleetHashrateEff').textContent = totalRated > 0 ? `${eff}% hashrate efficiency` : '--';
+    updateSummaryStripLayout();
+}
+
+function updateSummaryStripLayout() {
+    var strip = document.querySelector('.summary-strip');
+    if (!strip) return;
+    var extraVisible = strip.querySelectorAll('.summary-card[style*="display: none"]').length < strip.querySelectorAll('.summary-card[style]').length;
+    // Check if any optional cards are visible
+    var fleet = document.getElementById('fleetHealthCard');
+    var solar = document.getElementById('solarSavingsCard');
+    var hasExtra = (fleet && fleet.style.display !== 'none') || (solar && solar.style.display !== 'none');
+    strip.classList.toggle('has-extra', hasExtra);
+}
+
+// ---- Coin Switch Alerts ----
+async function loadCoinSwitchAlerts() {
+    try {
+        const resp = await fetch('/api/alerts/coin-switch');
+        if (!resp.ok) return;
+        const alerts = await resp.json();
+        const banner = document.getElementById('coinSwitchAlerts');
+        if (!alerts || alerts.length === 0) {
+            banner.style.display = 'none';
+            return;
+        }
+        banner.style.display = 'block';
+        banner.innerHTML = alerts.map(a =>
+            `<div class="alert-item">
+                <span class="alert-icon">&#9888;</span>
+                <span>Your <strong>${esc(a.algorithm)}</strong> miners could earn <strong class="profit-positive">+${a.gain_pct}%</strong> more mining <strong>${esc(a.better_coin)}</strong> instead of ${esc(a.current_coin)}</span>
+            </div>`
+        ).join('');
+    } catch (err) {
+        console.error('Failed to load coin switch alerts', err);
+    }
+}
+
+// ---- Profit History Chart ----
+async function loadProfitHistory() {
+    const section = document.getElementById('historySection');
+    try {
+        const days = document.getElementById('historyDays')?.value || 30;
+        const resp = await fetch(`/api/history/profit?days=${days}`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!data.fleet_total || data.fleet_total.length === 0) {
+            section.style.display = 'none';
+            return;
+        }
+        section.style.display = 'block';
+        renderProfitHistoryChart(data);
+    } catch (err) {
+        console.error('Failed to load profit history', err);
+        section.style.display = 'none';
+    }
+}
+
+function renderProfitHistoryChart(data) {
+    const canvas = document.getElementById('profitHistoryChart');
+    if (!canvas) return;
+
+    if (profitHistoryChart) profitHistoryChart.destroy();
+
+    const fleet = data.fleet_total;
+    const labels = fleet.map(d => d.day);
+    const profits = fleet.map(d => d.profit);
+    const revenues = fleet.map(d => d.revenue);
+    const electricity = fleet.map(d => d.electricity);
+
+    profitHistoryChart = new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [
+                {
+                    label: 'Daily Profit',
+                    data: profits,
+                    borderColor: '#22c55e',
+                    backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 3,
+                    borderWidth: 2,
+                },
+                {
+                    label: 'Revenue',
+                    data: revenues,
+                    borderColor: '#6366f1',
+                    borderDash: [4, 3],
+                    pointRadius: 2,
+                    borderWidth: 1.5,
+                    fill: false,
+                },
+                {
+                    label: 'Electricity',
+                    data: electricity,
+                    borderColor: '#ef4444',
+                    borderDash: [4, 3],
+                    pointRadius: 2,
+                    borderWidth: 1.5,
+                    fill: false,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    labels: { color: '#94a3b8', font: { size: 11 }, boxWidth: 12 },
+                },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => ctx.dataset.label + ': $' + ctx.raw.toFixed(2),
+                    },
+                },
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#64748b', maxTicksLimit: 10, font: { size: 10 } },
+                    grid: { color: 'rgba(51, 65, 85, 0.3)' },
+                },
+                y: {
+                    ticks: { color: '#64748b', callback: val => '$' + val.toFixed(0), font: { size: 10 } },
+                    grid: { color: 'rgba(51, 65, 85, 0.3)' },
+                },
+            },
+            interaction: { intersect: false, mode: 'index' },
+        },
+    });
+}
+
+function toggleHistorySection() {
+    const content = document.getElementById('historyContent');
+    const icon = document.getElementById('historyToggle');
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        icon.classList.remove('collapsed');
+    } else {
+        content.style.display = 'none';
+        icon.classList.add('collapsed');
+    }
+}
+
+// ---- Uptime Stats ----
+async function loadUptimeStats() {
+    try {
+        const resp = await fetch('/api/history/uptime?days=7');
+        if (!resp.ok) return;
+        uptimeData = await resp.json();
+        // Re-render table to show uptime in pool cells
+        if (dashboardData) renderMinerTable(dashboardData.miners);
+    } catch (err) {
+        console.error('Failed to load uptime stats', err);
     }
 }

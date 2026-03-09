@@ -46,7 +46,20 @@
             <div class="summary-value" id="minerCounts">0 / 0</div>
             <div class="summary-sub" id="minerCountsSub">profitable / unprofitable</div>
         </div>
+        <div class="summary-card" id="fleetHealthCard" style="display:none;">
+            <div class="summary-label">Fleet Health</div>
+            <div class="summary-value" id="fleetOnlineCount">--</div>
+            <div class="summary-sub" id="fleetHashrateEff">--</div>
+        </div>
+        <div class="summary-card" id="solarSavingsCard" style="display:none;">
+            <div class="summary-label">Solar Savings</div>
+            <div class="summary-value profit-positive" id="solarDailySavings">$0.00</div>
+            <div class="summary-sub" id="solarMonthlySavings">$0.00/mo</div>
+        </div>
     </section>
+
+    <!-- Coin Switch Alerts -->
+    <div class="alert-banner" id="coinSwitchAlerts" style="display:none;"></div>
 
     <!-- Location Breakdown -->
     <section class="location-section" id="locationSection">
@@ -55,6 +68,26 @@
             <span class="toggle-icon" id="locationToggle">&#9660;</span>
         </div>
         <div class="location-grid" id="locationGrid"></div>
+    </section>
+
+    <!-- Profit History Chart -->
+    <section class="history-section" id="historySection" style="display:none;">
+        <div class="section-header" onclick="toggleHistorySection()">
+            <h2>Profit History</h2>
+            <div style="display:flex;align-items:center;gap:10px;">
+                <select id="historyDays" onchange="loadProfitHistory()" style="padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:0.8rem;">
+                    <option value="7">7 days</option>
+                    <option value="30" selected>30 days</option>
+                    <option value="90">90 days</option>
+                </select>
+                <span class="toggle-icon" id="historyToggle">&#9660;</span>
+            </div>
+        </div>
+        <div id="historyContent">
+            <div style="position:relative;height:280px;padding:0 24px;">
+                <canvas id="profitHistoryChart"></canvas>
+            </div>
+        </div>
     </section>
 
     <!-- Main Table -->

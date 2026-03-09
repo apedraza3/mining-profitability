@@ -38,6 +38,18 @@ class ProfitabilityEngine:
         return (wattage * 24 / 1000) * cost_kwh
 
     @staticmethod
+    def effective_elec_rate(location: dict, total_location_watts: int = 0) -> tuple[float, float]:
+        """Calculate effective electricity rate after solar offset.
+        Returns (effective_rate, solar_offset_pct) where offset is 0.0 to 1.0."""
+        base_rate = location.get("electricity_cost_kwh", 0.10)
+        solar_kwh = location.get("solar_daily_kwh", 0)
+        if not solar_kwh or solar_kwh <= 0 or total_location_watts <= 0:
+            return base_rate, 0.0
+        mining_daily_kwh = total_location_watts * 24 / 1000
+        offset = min(solar_kwh / mining_daily_kwh, 1.0)
+        return round(base_rate * (1 - offset), 6), round(offset, 4)
+
+    @staticmethod
     def calculate_roi(
         purchase_price: float,
         quantity: int,
@@ -201,7 +213,8 @@ class ProfitabilityEngine:
             return "unprofitable"
 
     def calculate_for_miner(
-        self, miner: dict, location: dict, primary_only: bool = True
+        self, miner: dict, location: dict, primary_only: bool = True,
+        solar_info: dict | None = None,
     ) -> dict:
         """Calculate profitability data for one miner.
         primary_only=True fetches only the main coin per algo (faster, for table view).
@@ -284,6 +297,18 @@ class ProfitabilityEngine:
         daily_kwh = effective_watts * 24 / 1000
         breakeven_elec_rate = round(daily_revenue / daily_kwh, 4) if daily_kwh > 0 and daily_revenue > 0 else 0
 
+        # Solar-adjusted electricity cost
+        si = solar_info or {}
+        solar_offset_pct = si.get("solar_offset_pct", 0)
+        if solar_offset_pct > 0:
+            solar_elec = round(daily_electricity * (1 - solar_offset_pct), 2)
+            solar_profit = round(daily_revenue - solar_elec, 2)
+            solar_savings = round(daily_electricity - solar_elec, 2)
+        else:
+            solar_elec = None
+            solar_profit = None
+            solar_savings = None
+
         return {
             "miner": miner,
             "location": location,
@@ -299,6 +324,12 @@ class ProfitabilityEngine:
             "best_daily_profit": round(best_daily, 2),
             "best_source": best_source,
             "breakeven_elec_rate": breakeven_elec_rate,
+            "solar": {
+                "offset_pct": solar_offset_pct,
+                "daily_electricity": solar_elec,
+                "daily_profit": solar_profit,
+                "daily_savings": solar_savings,
+            },
             "status": "inactive" if is_inactive else self._get_status(best_daily),
         }
 
@@ -306,6 +337,27 @@ class ProfitabilityEngine:
         """Calculate profitability for all miners in inventory."""
         miners = self.inventory.get_all_miners()
         locations = {l["id"]: l for l in self.inventory.get_all_locations()}
+
+        # Pre-calculate total wattage per location for solar offset distribution
+        location_watts = {}
+        for miner in miners:
+            if miner.get("status") == "inactive":
+                continue
+            loc_id = miner.get("location_id", "")
+            w = miner.get("wattage", 0) * miner.get("quantity", 1)
+            location_watts[loc_id] = location_watts.get(loc_id, 0) + w
+
+        # Calculate effective electricity rates per location (after solar)
+        location_solar = {}
+        for loc_id, loc in locations.items():
+            total_w = location_watts.get(loc_id, 0)
+            eff_rate, offset_pct = self.effective_elec_rate(loc, total_w)
+            location_solar[loc_id] = {
+                "effective_rate": eff_rate,
+                "solar_offset_pct": offset_pct,
+                "solar_daily_kwh": loc.get("solar_daily_kwh", 0),
+                "mining_daily_kwh": total_w * 24 / 1000 if total_w > 0 else 0,
+            }
 
         results = []
         for miner in miners:
@@ -316,7 +368,8 @@ class ProfitabilityEngine:
                 "electricity_cost_kwh": 0.10,
                 "currency": "USD",
             })
-            result = self.calculate_for_miner(miner, location)
+            solar_info = location_solar.get(loc_id, {})
+            result = self.calculate_for_miner(miner, location, solar_info=solar_info)
             results.append(result)
 
         # Summary
@@ -345,13 +398,25 @@ class ProfitabilityEngine:
         unprofitable_count = sum(1 for r in active if r["status"] == "unprofitable")
         marginal_count = sum(1 for r in active if r["status"] == "marginal")
 
+        # Solar-adjusted totals
+        total_solar_savings = sum(
+            (r["solar"].get("daily_savings") or 0) * r["miner"].get("quantity", 1)
+            for r in active
+        )
+        total_solar_elec = total_daily_elec - total_solar_savings
+        total_solar_profit = total_daily_revenue - total_solar_elec
+
         # By location
         by_location = {}
         for r in active:
             loc_name = r["location"].get("name", "Unknown")
+            loc_id = r["location"].get("id", "")
             if loc_name not in by_location:
+                solar = location_solar.get(loc_id, {})
                 by_location[loc_name] = {
                     "electricity_cost_kwh": r["location"].get("electricity_cost_kwh", 0),
+                    "solar_daily_kwh": solar.get("solar_daily_kwh", 0),
+                    "solar_offset_pct": solar.get("solar_offset_pct", 0),
                     "miners": 0,
                     "units": 0,
                     "daily_profit": 0,
@@ -391,11 +456,66 @@ class ProfitabilityEngine:
                     if total_daily_profit > 0
                     else -1
                 ),
+                "total_solar_savings": round(total_solar_savings, 2),
+                "total_solar_electricity": round(total_solar_elec, 2),
+                "total_solar_profit": round(total_solar_profit, 2),
             },
             "by_location": by_location,
             "last_updated": datetime.now().isoformat(),
             "cache_status": cache_status,
         }
+
+    def get_coin_switch_alerts(self) -> list[dict]:
+        """Check if any algorithm has a more profitable coin than the primary."""
+        alerts = []
+        for algo, coins in self.coin_mappings.items():
+            if len(coins) <= 1:
+                continue
+
+            refs = []
+            for coin in coins:
+                ref = self.whattomine.get_coin_reference_data(coin["coin_id"])
+                if ref and "revenue" in ref:
+                    rev_str = ref.get("revenue", "0")
+                    if isinstance(rev_str, str):
+                        rev = float(
+                            rev_str.replace("$", "").replace(",", "").strip() or "0"
+                        )
+                    else:
+                        rev = float(rev_str or 0)
+                    refs.append({"coin": coin, "revenue_per_unit": rev})
+
+            if len(refs) < 2:
+                continue
+
+            refs.sort(key=lambda x: x["revenue_per_unit"], reverse=True)
+            best = refs[0]
+            primary_coin_id = coins[0]["coin_id"]
+            current = next(
+                (r for r in refs if r["coin"]["coin_id"] == primary_coin_id), None
+            )
+
+            if (
+                current
+                and best["coin"]["coin_id"] != primary_coin_id
+                and current["revenue_per_unit"] > 0
+            ):
+                gain_pct = round(
+                    (best["revenue_per_unit"] / current["revenue_per_unit"] - 1) * 100,
+                    1,
+                )
+                if gain_pct >= 5:
+                    alerts.append(
+                        {
+                            "algorithm": algo,
+                            "current_coin": current["coin"]["tag"],
+                            "better_coin": best["coin"]["tag"],
+                            "better_coin_name": best["coin"]["name"],
+                            "gain_pct": gain_pct,
+                        }
+                    )
+
+        return alerts
 
     @staticmethod
     def _format_age(seconds: int | None) -> str:

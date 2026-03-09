@@ -1,5 +1,7 @@
 import logging
 import os
+import threading
+import time as _time
 from functools import wraps
 
 import bcrypt
@@ -13,6 +15,7 @@ from services.hashrateno_service import HashrateNoService
 from services.miningnow_service import MiningNowService
 from services.profitability_engine import ProfitabilityEngine
 from services.powerpool_service import PowerPoolService
+from services.history_service import HistoryService
 from services.power_import import (
     import_power_csv, get_power_data, clear_power_data
 )
@@ -64,6 +67,27 @@ powerpool_svc = PowerPoolService(config.POWERPOOL_OBSERVER_KEY, pp_cache)
 engine = ProfitabilityEngine(
     whattomine_svc, hashrateno_svc, miningnow_svc, inventory_mgr
 )
+history_svc = HistoryService()
+
+
+# ---- Background uptime tracker ----
+
+def _uptime_tracker():
+    """Background thread: logs PowerPool worker uptime every 5 minutes."""
+    _time.sleep(30)  # Wait for app to start
+    while True:
+        try:
+            if powerpool_svc.is_configured():
+                miners = inventory_mgr.get_all_miners()
+                statuses = powerpool_svc.get_all_worker_statuses(miners)
+                history_svc.record_uptime(statuses, miners)
+        except Exception as e:
+            logger.error("Uptime tracker error: %s", e)
+        _time.sleep(300)  # 5 minutes
+
+
+_tracker_thread = threading.Thread(target=_uptime_tracker, daemon=True)
+_tracker_thread.start()
 
 
 # ---- Auth routes ----
@@ -219,6 +243,11 @@ def delete_location(location_id):
 def get_profitability():
     try:
         data = engine.calculate_all()
+        # Piggyback: record profit snapshot (self-throttles to once per hour)
+        try:
+            history_svc.record_profit_snapshot(data.get("miners", []))
+        except Exception as e:
+            logger.error("Profit snapshot failed: %s", e)
         return jsonify(data)
     except Exception as e:
         logger.error("Profitability calculation failed: %s", e)
@@ -399,6 +428,32 @@ def cache_status():
             "configured": powerpool_svc.is_configured(),
         },
     })
+
+
+# ---- History & Analytics API ----
+
+@app.route("/api/history/profit", methods=["GET"])
+@login_required
+def profit_history():
+    """Get daily profit history for chart rendering."""
+    days = request.args.get("days", 30, type=int)
+    miner_id = request.args.get("miner_id")
+    return jsonify(history_svc.get_profit_history(days=days, miner_id=miner_id))
+
+
+@app.route("/api/history/uptime", methods=["GET"])
+@login_required
+def uptime_stats():
+    """Get uptime stats per miner."""
+    days = request.args.get("days", 7, type=int)
+    return jsonify(history_svc.get_uptime_stats(days=days))
+
+
+@app.route("/api/alerts/coin-switch", methods=["GET"])
+@login_required
+def coin_switch_alerts():
+    """Check if any algorithm has a more profitable coin than the primary."""
+    return jsonify(engine.get_coin_switch_alerts())
 
 
 # ---- Analysis Tools API ----

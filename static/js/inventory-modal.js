@@ -106,8 +106,9 @@ function renderLocationsList() {
         const row = document.createElement('div');
         row.className = 'location-row';
         row.innerHTML = `
-            <input type="text" value="${esc(loc.name)}" data-id="${loc.id}" data-field="name" onchange="updateLocationField(this)">
-            <input type="number" value="${loc.electricity_cost_kwh}" step="0.01" min="0" max="1" data-id="${loc.id}" data-field="electricity_cost_kwh" onchange="updateLocationField(this)">
+            <input type="text" value="${esc(loc.name)}" data-id="${loc.id}" data-field="name" onchange="updateLocationField(this)" placeholder="Name">
+            <input type="number" value="${loc.electricity_cost_kwh}" step="0.01" min="0" max="1" data-id="${loc.id}" data-field="electricity_cost_kwh" onchange="updateLocationField(this)" title="Electricity $/kWh">
+            <input type="number" value="${loc.solar_daily_kwh || 0}" step="0.1" min="0" data-id="${loc.id}" data-field="solar_daily_kwh" onchange="updateLocationField(this)" title="Avg daily solar production (kWh)" placeholder="Solar kWh/day">
             <button class="btn-sm delete" onclick="deleteLocation('${loc.id}')" title="Delete">&times;</button>
         `;
         list.appendChild(row);
@@ -134,7 +135,7 @@ async function updateLocationField(input) {
     const id = input.dataset.id;
     const field = input.dataset.field;
     let value = input.value;
-    if (field === 'electricity_cost_kwh') value = parseFloat(value);
+    if (field === 'electricity_cost_kwh' || field === 'solar_daily_kwh') value = parseFloat(value) || 0;
 
     try {
         await fetch(`/api/locations/${id}`, {
