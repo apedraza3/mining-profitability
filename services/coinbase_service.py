@@ -62,6 +62,23 @@ class CoinbaseService:
             logger.error("Coinbase API error: %s", e)
         return None
 
+    def _get_usd_prices(self, currencies: list[str]) -> dict[str, float]:
+        """Fetch USD prices for given currency codes via Coinbase exchange rates (public, no auth)."""
+        prices = {}
+        for code in currencies:
+            try:
+                resp = requests.get(
+                    f"{self.BASE_URL}/v2/exchange-rates?currency={code}",
+                    timeout=10,
+                )
+                if resp.ok:
+                    rate = resp.json().get("data", {}).get("rates", {}).get("USD")
+                    if rate:
+                        prices[code] = float(rate)
+            except Exception as e:
+                logger.warning("Failed to fetch price for %s: %s", code, e)
+        return prices
+
     def get_accounts(self) -> list[dict]:
         """Fetch all Coinbase accounts with balances. Uses cache."""
         cached = self.cache.get("accounts", self.CACHE_TTL)
@@ -97,6 +114,15 @@ class CoinbaseService:
             pagination = data.get("pagination", {})
             next_uri = pagination.get("next_uri")
             path = next_uri if next_uri else None
+
+        # If native_balance is 0 for all accounts, fetch prices and calculate USD values
+        if accounts and all(a["native_balance"] == 0 for a in accounts):
+            currencies = list({a["currency"] for a in accounts})
+            prices = self._get_usd_prices(currencies)
+            for acct in accounts:
+                price = prices.get(acct["currency"], 0)
+                acct["native_balance"] = round(acct["balance"] * price, 2)
+                acct["native_currency"] = "USD"
 
         self.cache.set("accounts", accounts)
         return accounts
