@@ -115,15 +115,15 @@ class CoinbaseService:
             next_uri = pagination.get("next_uri")
             path = next_uri if next_uri else None
 
-        # If native_balance is 0 for all accounts, fetch prices and calculate USD values
-        needs_prices = accounts and all(a["native_balance"] == 0 for a in accounts)
-        logger.info("Coinbase accounts: %d found, needs_prices=%s", len(accounts), needs_prices)
-        if needs_prices:
-            currencies = list({a["currency"] for a in accounts})
+        # Fetch USD prices for any accounts missing native_balance
+        missing = [a for a in accounts if a["native_balance"] == 0 and a["balance"] > 0]
+        logger.info("Coinbase accounts: %d found, %d missing USD values", len(accounts), len(missing))
+        if missing:
+            currencies = list({a["currency"] for a in missing})
             logger.info("Fetching USD prices for: %s", currencies)
             prices = self._get_usd_prices(currencies)
             logger.info("Got prices: %s", prices)
-            for acct in accounts:
+            for acct in missing:
                 price = prices.get(acct["currency"], 0)
                 acct["native_balance"] = round(acct["balance"] * price, 2)
                 acct["native_currency"] = "USD"
