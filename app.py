@@ -16,6 +16,7 @@ from services.miningnow_service import MiningNowService
 from services.profitability_engine import ProfitabilityEngine
 from services.powerpool_service import PowerPoolService
 from services.history_service import HistoryService
+from services.coinbase_service import CoinbaseService
 from services.power_import import (
     import_power_csv, get_power_data, clear_power_data
 )
@@ -68,6 +69,10 @@ engine = ProfitabilityEngine(
     whattomine_svc, hashrateno_svc, miningnow_svc, inventory_mgr
 )
 history_svc = HistoryService()
+cb_cache = CacheManager(str(config.CACHE_DIR / "coinbase"))
+coinbase_svc = CoinbaseService(
+    config.COINBASE_API_KEY, config.COINBASE_API_SECRET, cb_cache
+)
 
 
 # ---- Background uptime tracker ----
@@ -149,6 +154,12 @@ def optimizer_page():
 @login_required
 def difficulty_page():
     return render_template("difficulty.html", active_page="difficulty")
+
+
+@app.route("/wallet")
+@login_required
+def wallet_page():
+    return render_template("wallet.html", active_page="wallet")
 
 
 # ---- Miners API ----
@@ -377,6 +388,37 @@ def power_clear():
     return jsonify({"success": True})
 
 
+# ---- Coinbase Wallet API ----
+
+@app.route("/api/wallet/portfolio", methods=["GET"])
+@login_required
+def wallet_portfolio():
+    """Get Coinbase wallet portfolio summary."""
+    if not coinbase_svc.is_configured():
+        return jsonify({"error": "Coinbase API not configured"}), 404
+    try:
+        data = coinbase_svc.get_portfolio_summary()
+        data["cache_age"] = coinbase_svc.get_cache_age()
+        return jsonify(data)
+    except Exception as e:
+        logger.error("Coinbase portfolio error: %s", e)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/wallet/accounts", methods=["GET"])
+@login_required
+def wallet_accounts():
+    """Get all Coinbase accounts with non-zero balances."""
+    if not coinbase_svc.is_configured():
+        return jsonify({"error": "Coinbase API not configured"}), 404
+    try:
+        accounts = coinbase_svc.get_accounts()
+        return jsonify(accounts)
+    except Exception as e:
+        logger.error("Coinbase accounts error: %s", e)
+        return jsonify({"error": str(e)}), 500
+
+
 # ---- Cache management ----
 
 @app.route("/api/cache/refresh", methods=["POST"])
@@ -386,6 +428,7 @@ def refresh_all_caches():
     hrn_cache.invalidate_all()
     mn_cache.invalidate_all()
     pp_cache.invalidate_all()
+    cb_cache.invalidate_all()
     return jsonify({"success": True, "message": "All caches cleared"})
 
 
@@ -397,6 +440,7 @@ def refresh_source_cache(source):
         "hashrateno": hrn_cache,
         "miningnow": mn_cache,
         "powerpool": pp_cache,
+        "coinbase": cb_cache,
     }
     cache = caches.get(source)
     if not cache:

@@ -578,6 +578,87 @@ body {
     max-height: 320px;
 }
 
+/* Wallet page */
+.wallet-summary {
+    margin-bottom: 20px;
+}
+.wallet-total-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px 32px;
+    text-align: center;
+}
+.wallet-total-label {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+.wallet-total-value {
+    font-size: 2.4rem;
+    font-weight: 700;
+    color: var(--profit-green);
+}
+.wallet-total-sub {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 6px;
+}
+
+/* Allocation bar */
+.alloc-bar {
+    width: 60px;
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.alloc-fill {
+    height: 100%;
+    background: var(--primary);
+    border-radius: 3px;
+    min-width: 1px;
+}
+
+/* Mining earnings tie-in */
+.wallet-earnings-section {
+    margin-top: 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+.wallet-earnings-section .section-header {
+    padding: 12px 16px;
+}
+.wallet-earnings-section .section-header h3 {
+    font-size: 0.95rem;
+}
+.wallet-earnings-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+    padding: 0 16px 16px;
+}
+.wallet-earnings-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+}
+.earnings-coin {
+    font-weight: 700;
+    font-size: 1rem;
+    margin-bottom: 6px;
+}
+.earnings-detail {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin: 3px 0;
+}
+.earnings-detail strong {
+    color: var(--text);
+}
+
 /* Uptime display in pool cell */
 .pool-uptime {
     font-size: 0.65rem;

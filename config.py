@@ -25,6 +25,11 @@ HASHRATE_NO_API_KEY = os.getenv("HASHRATE_NO_API_KEY", "")
 # PowerPool
 POWERPOOL_OBSERVER_KEY = os.getenv("POWERPOOL_OBSERVER_KEY", "")
 
+# Coinbase
+COINBASE_API_KEY = os.getenv("COINBASE_API_KEY", "")
+COINBASE_API_SECRET = os.getenv("COINBASE_API_SECRET", "")
+COINBASE_CACHE_TTL = 300  # 5 minutes
+
 # WhatToMine
 WHATTOMINE_BASE_URL = "https://whattomine.com"
 WHATTOMINE_REQUEST_DELAY = 3.0    # seconds between requests (be polite)

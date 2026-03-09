@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Wallet - Mining Dashboard{% endblock %}
+
+{% block content %}
+<div class="tool-page">
+    <div class="tool-page-header">
+        <h2>Coinbase Wallet</h2>
+    </div>
+
+    <!-- Portfolio Summary -->
+    <div class="wallet-summary" id="walletSummary">
+        <div class="wallet-total-card">
+            <div class="wallet-total-label">Total Portfolio Value</div>
+            <div class="wallet-total-value" id="totalPortfolioValue">--</div>
+            <div class="wallet-total-sub" id="holdingsCount">Loading...</div>
+        </div>
+    </div>
+
+    <!-- Not Configured State -->
+    <div class="empty-state" id="notConfigured" style="display:none;">
+        <p>Coinbase API not configured.</p>
+        <p style="font-size:0.85rem;">Add <code>COINBASE_API_KEY</code> and <code>COINBASE_API_SECRET</code> to your .env file.</p>
+        <p style="font-size:0.8rem;color:var(--text-muted);margin-top:8px;">
+            Create a legacy API key at Coinbase &rarr; Settings &rarr; API with <strong>wallet:accounts:read</strong> permission.
+        </p>
+    </div>
+
+    <!-- Holdings Table -->
+    <div class="table-section" id="holdingsSection" style="display:none;">
+        <div class="table-wrapper">
+            <table class="miner-table">
+                <thead>
+                    <tr>
+                        <th class="sortable" data-col="currency" onclick="sortWallet('currency')">Currency</th>
+                        <th class="sortable" data-col="balance" onclick="sortWallet('balance')">Balance</th>
+                        <th class="sortable" data-col="value" onclick="sortWallet('value')">USD Value</th>
+                        <th class="sortable" data-col="allocation" onclick="sortWallet('allocation')">Allocation</th>
+                        <th>Type</th>
+                    </tr>
+                </thead>
+                <tbody id="holdingsTableBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Mining Earnings Tie-in -->
+    <div class="wallet-earnings-section" id="earningsSection" style="display:none;">
+        <div class="section-header" onclick="toggleEarningsSection()">
+            <h3>Mining Earnings vs Holdings</h3>
+            <span class="toggle-icon" id="earningsToggle">&#9660;</span>
+        </div>
+        <div id="earningsContent">
+            <div class="wallet-earnings-grid" id="earningsGrid"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/wallet.js?v=1"></script>
+{% endblock %}
