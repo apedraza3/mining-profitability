@@ -252,9 +252,7 @@ function renderMinerTable(minerResults) {
         tr.innerHTML = `
             <td>${esc(m.name)}</td>
             <td>${m.type}</td>
-            <td>${esc(m.algorithm)}</td>
             <td>${esc(loc.name || '--')}</td>
-            <td>${m.hashrate} ${m.hashrate_unit}</td>
             <td>${formatWatts(r.power)}</td>
             <td>${m.quantity || 1}</td>
             <td>${elecCell}</td>
@@ -291,7 +289,7 @@ function renderMinerTable(minerResults) {
     const totalTr = document.createElement('tr');
     totalTr.className = 'totals-row';
     totalTr.innerHTML = `
-        <td colspan="5" style="text-align:right;font-weight:700;">Totals</td>
+        <td colspan="3" style="text-align:right;font-weight:700;">Totals</td>
         <td style="font-weight:700;">${Math.round(totalWatts)}W</td>
         <td style="font-weight:700;">${totalQty}</td>
         <td style="font-weight:700;color:var(--profit-red)">${formatCurrency(totalElec)}</td>
