@@ -24,6 +24,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadCoinSwitchAlerts();
     loadProfitHistory();
     loadUptimeStats();
+    loadWalletSummary();
     // Refresh pool status every 2 minutes
     poolRefreshInterval = setInterval(loadPoolStatus, 2 * 60 * 1000);
 
@@ -1061,5 +1062,20 @@ async function loadUptimeStats() {
         if (dashboardData) renderMinerTable(dashboardData.miners);
     } catch (err) {
         console.error('Failed to load uptime stats', err);
+    }
+}
+
+async function loadWalletSummary() {
+    try {
+        const resp = await fetch('/api/wallet/portfolio');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (data.total_usd > 0) {
+            document.getElementById('walletCard').style.display = '';
+            document.getElementById('walletTotal').textContent = '$' + data.total_usd.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            document.getElementById('walletSub').textContent = data.count + ' assets';
+        }
+    } catch (err) {
+        console.error('Failed to load wallet summary', err);
     }
 }
