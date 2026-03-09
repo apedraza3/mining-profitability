@@ -71,7 +71,7 @@ engine = ProfitabilityEngine(
 history_svc = HistoryService()
 cb_cache = CacheManager(str(config.CACHE_DIR / "coinbase"))
 coinbase_svc = CoinbaseService(
-    config.COINBASE_API_KEY, config.COINBASE_API_SECRET, cb_cache
+    config.COINBASE_API_KEY_NAME, config.COINBASE_API_PRIVATE_KEY, cb_cache
 )
 
 

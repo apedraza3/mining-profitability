@@ -1,8 +1,8 @@
-import hashlib
-import hmac
 import logging
+import secrets
 import time
 
+import jwt
 import requests
 
 from services.cache_manager import CacheManager
@@ -11,39 +11,47 @@ logger = logging.getLogger(__name__)
 
 
 class CoinbaseService:
-    """Fetches wallet balances from the Coinbase v2 API (legacy API key auth)."""
+    """Fetches wallet balances from the Coinbase API using CDP API key (JWT/ES256)."""
 
     BASE_URL = "https://api.coinbase.com"
     API_VERSION = "2018-02-01"
     CACHE_TTL = 300  # 5 minutes
 
-    def __init__(self, api_key: str, api_secret: str, cache: CacheManager):
-        self.api_key = api_key
-        self.api_secret = api_secret
+    def __init__(self, api_key_name: str, api_private_key: str, cache: CacheManager):
+        self.api_key_name = api_key_name
+        self.api_private_key = api_private_key.replace("\\n", "\n")
         self.cache = cache
 
     def is_configured(self) -> bool:
-        return bool(self.api_key and self.api_secret)
+        return bool(self.api_key_name and self.api_private_key)
 
-    def _sign(self, method: str, path: str, body: str = "") -> dict:
-        timestamp = str(int(time.time()))
-        message = timestamp + method.upper() + path + body
-        signature = hmac.new(
-            self.api_secret.encode("utf-8"),
-            message.encode("utf-8"),
-            hashlib.sha256,
-        ).hexdigest()
-        return {
-            "CB-ACCESS-KEY": self.api_key,
-            "CB-ACCESS-SIGN": signature,
-            "CB-ACCESS-TIMESTAMP": timestamp,
-            "CB-VERSION": self.API_VERSION,
-            "Content-Type": "application/json",
+    def _build_jwt(self, method: str, path: str) -> str:
+        """Build a signed JWT for CDP API key authentication."""
+        uri = f"{method.upper()} api.coinbase.com{path}"
+        now = int(time.time())
+        payload = {
+            "sub": self.api_key_name,
+            "iss": "cdp",
+            "aud": ["cdp_service"],
+            "nbf": now,
+            "exp": now + 120,
+            "uris": [uri],
         }
+        headers = {
+            "kid": self.api_key_name,
+            "nonce": secrets.token_hex(16),
+            "typ": "JWT",
+        }
+        return jwt.encode(payload, self.api_private_key, algorithm="ES256", headers=headers)
 
     def _get(self, path: str) -> dict | None:
         try:
-            headers = self._sign("GET", path)
+            token = self._build_jwt("GET", path.split("?")[0])
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "CB-VERSION": self.API_VERSION,
+                "Content-Type": "application/json",
+            }
             resp = requests.get(
                 self.BASE_URL + path, headers=headers, timeout=10
             )
