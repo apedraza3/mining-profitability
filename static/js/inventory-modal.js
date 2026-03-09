@@ -25,6 +25,7 @@ function openMinerModal(minerId) {
             document.getElementById('minerStatus').value = miner.status || 'active';
             document.getElementById('minerHrnKey').value = miner.hashrateno_model_key || '';
             document.getElementById('minerMnKey').value = miner.miningnow_model_key || '';
+            document.getElementById('minerPpKey').value = miner.powerpool_worker_key || '';
         }
     } else {
         title.textContent = 'Add Miner';
@@ -60,6 +61,7 @@ async function saveMiner(event) {
         status: document.getElementById('minerStatus').value,
         hashrateno_model_key: document.getElementById('minerHrnKey').value.trim(),
         miningnow_model_key: document.getElementById('minerMnKey').value.trim(),
+        powerpool_worker_key: document.getElementById('minerPpKey').value.trim(),
     };
 
     try {

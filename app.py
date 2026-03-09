@@ -12,6 +12,7 @@ from services.whattomine_service import WhatToMineService
 from services.hashrateno_service import HashrateNoService
 from services.miningnow_service import MiningNowService
 from services.profitability_engine import ProfitabilityEngine
+from services.powerpool_service import PowerPoolService
 from services.power_import import (
     import_power_csv, get_power_data, clear_power_data
 )
@@ -51,6 +52,7 @@ def login_required(f):
 wtm_cache = CacheManager(str(config.CACHE_DIR / "whattomine"))
 hrn_cache = CacheManager(str(config.CACHE_DIR / "hashrateno"))
 mn_cache = CacheManager(str(config.CACHE_DIR / "miningnow"))
+pp_cache = CacheManager(str(config.CACHE_DIR / "powerpool"))
 
 inventory_mgr = InventoryManager(
     str(config.INVENTORY_FILE), str(config.LOCATIONS_FILE)
@@ -58,6 +60,7 @@ inventory_mgr = InventoryManager(
 whattomine_svc = WhatToMineService(wtm_cache)
 hashrateno_svc = HashrateNoService(config.HASHRATE_NO_API_KEY, hrn_cache)
 miningnow_svc = MiningNowService(mn_cache)
+powerpool_svc = PowerPoolService(config.POWERPOOL_OBSERVER_KEY, pp_cache)
 engine = ProfitabilityEngine(
     whattomine_svc, hashrateno_svc, miningnow_svc, inventory_mgr
 )
@@ -269,6 +272,52 @@ def get_algorithms():
     return jsonify(list(engine.coin_mappings.keys()))
 
 
+# ---- PowerPool Monitoring API ----
+
+@app.route("/api/pool/workers", methods=["GET"])
+@login_required
+def pool_workers():
+    """Get all PowerPool worker statuses matched to inventory miners."""
+    if not powerpool_svc.is_configured():
+        return jsonify({"error": "PowerPool observer key not configured"}), 404
+    miners = inventory_mgr.get_all_miners()
+    statuses = powerpool_svc.get_all_worker_statuses(miners)
+    unmatched = powerpool_svc.get_unmatched_workers(miners)
+    return jsonify({
+        "statuses": statuses,
+        "unmatched": [
+            {
+                "worker_name": w["short_name"],
+                "algorithm": w.get("algorithm", ""),
+                "hashrate": round(w.get("hashrate", 0), 2),
+                "hashrate_units": w.get("hashrate_units", ""),
+                "online": w.get("online", False),
+            }
+            for w in unmatched
+        ],
+        "configured": True,
+        "cache_age": powerpool_svc.get_cache_age(),
+    })
+
+
+@app.route("/api/pool/overview", methods=["GET"])
+@login_required
+def pool_overview():
+    """Get PowerPool mining overview (per-algorithm totals)."""
+    if not powerpool_svc.is_configured():
+        return jsonify({"error": "PowerPool observer key not configured"}), 404
+    return jsonify(powerpool_svc.get_mining_overview())
+
+
+@app.route("/api/pool/revenue", methods=["GET"])
+@login_required
+def pool_revenue():
+    """Get PowerPool balance/earnings."""
+    if not powerpool_svc.is_configured():
+        return jsonify({"error": "PowerPool observer key not configured"}), 404
+    return jsonify(powerpool_svc.get_revenue())
+
+
 # ---- CSV Power Import ----
 
 @app.route("/api/power-import/upload", methods=["POST"])
@@ -307,6 +356,7 @@ def refresh_all_caches():
     wtm_cache.invalidate_all()
     hrn_cache.invalidate_all()
     mn_cache.invalidate_all()
+    pp_cache.invalidate_all()
     return jsonify({"success": True, "message": "All caches cleared"})
 
 
@@ -317,6 +367,7 @@ def refresh_source_cache(source):
         "whattomine": wtm_cache,
         "hashrateno": hrn_cache,
         "miningnow": mn_cache,
+        "powerpool": pp_cache,
     }
     cache = caches.get(source)
     if not cache:
@@ -341,6 +392,11 @@ def cache_status():
         "miningnow": {
             "age_seconds": mn_cache.get_age_seconds("miner_list"),
             "ttl_seconds": config.MININGNOW_CACHE_TTL,
+        },
+        "powerpool": {
+            "age_seconds": powerpool_svc.get_cache_age(),
+            "ttl_seconds": 120,
+            "configured": powerpool_svc.is_configured(),
         },
     })
 

@@ -22,6 +22,9 @@ MININGNOW_CACHE_TTL = 21600       # 6 hours
 # API Keys
 HASHRATE_NO_API_KEY = os.getenv("HASHRATE_NO_API_KEY", "")
 
+# PowerPool
+POWERPOOL_OBSERVER_KEY = os.getenv("POWERPOOL_OBSERVER_KEY", "")
+
 # WhatToMine
 WHATTOMINE_BASE_URL = "https://whattomine.com"
 WHATTOMINE_REQUEST_DELAY = 3.0    # seconds between requests (be polite)

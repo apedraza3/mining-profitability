@@ -13,6 +13,7 @@
                 <span class="source-dot" data-source="whattomine" title="WhatToMine">WTM</span>
                 <span class="source-dot" data-source="hashrateno" title="Hashrate.no">HR</span>
                 <span class="source-dot" data-source="miningnow" title="MiningNow">MN</span>
+                <span class="source-dot" data-source="powerpool" title="PowerPool">PP</span>
             </div>
             <label class="auto-refresh-toggle">
                 <input type="checkbox" id="autoRefreshToggle">
@@ -97,6 +98,7 @@
                         <th class="sortable" data-col="profit_per_kw" onclick="sortTable('profit_per_kw')" title="Daily profit per kilowatt — higher is more efficient">$/kW</th>
                         <th class="sortable" data-col="roi_days" onclick="sortTable('roi_days')" title="Days until purchase price is paid back">ROI</th>
                         <th>Status</th>
+                        <th title="PowerPool live worker status">Pool</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -261,6 +263,10 @@
                         <div class="form-group">
                             <label>MiningNow Model Key</label>
                             <input type="text" id="minerMnKey" placeholder="Auto-matched by model name">
+                        </div>
+                        <div class="form-group" style="grid-column: span 2;">
+                            <label>PowerPool Worker Name</label>
+                            <input type="text" id="minerPpKey" placeholder="Auto-matched by miner name (e.g. S21Home)">
                         </div>
                     </div>
                 </details>

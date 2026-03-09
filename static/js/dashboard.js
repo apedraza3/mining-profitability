@@ -2,10 +2,12 @@
 let dashboardData = null;
 let miners = [];
 let locations = [];
+let poolData = null;
 let sortColumn = 'best_profit';
 let sortDirection = 'desc';
 let expandedMinerId = null;
 let autoRefreshInterval = null;
+let poolRefreshInterval = null;
 
 // ---- Init ----
 document.addEventListener('DOMContentLoaded', () => {
@@ -16,6 +18,9 @@ document.addEventListener('DOMContentLoaded', () => {
     loadDashboard();
     loadLocations();
     loadAlgorithms();
+    loadPoolStatus();
+    // Refresh pool status every 2 minutes
+    poolRefreshInterval = setInterval(loadPoolStatus, 2 * 60 * 1000);
 
     autoRefreshEl.addEventListener('change', (e) => {
         if (e.target.checked) {
@@ -74,13 +79,41 @@ async function loadAlgorithms() {
     }
 }
 
+async function loadPoolStatus() {
+    try {
+        const resp = await fetch('/api/pool/workers');
+        if (!resp.ok) {
+            poolData = null;
+            return;
+        }
+        poolData = await resp.json();
+        // Re-render table if dashboard data exists to update pool column
+        if (dashboardData) renderMinerTable(dashboardData.miners);
+        // Update PP source indicator
+        var ppDot = document.querySelector('.source-dot[data-source="powerpool"]');
+        if (ppDot && poolData.configured) {
+            var age = poolData.cache_age;
+            if (age != null && age < 300) {
+                ppDot.className = 'source-dot fresh';
+                ppDot.title = 'PowerPool - ' + Math.round(age / 60) + 'm ago';
+            } else if (age != null) {
+                ppDot.className = 'source-dot stale';
+                ppDot.title = 'PowerPool - ' + Math.round(age / 60) + 'm ago';
+            }
+        }
+    } catch (err) {
+        console.error('Failed to load pool status', err);
+        poolData = null;
+    }
+}
+
 async function refreshData() {
     const btn = document.getElementById('refreshBtn');
     btn.disabled = true;
     btn.textContent = 'Refreshing...';
     try {
         await fetch('/api/cache/refresh', { method: 'POST' });
-        await loadDashboard();
+        await Promise.all([loadDashboard(), loadPoolStatus()]);
         showToast('Data refreshed', 'success');
     } catch (err) {
         showToast('Refresh failed: ' + err.message, 'error');
@@ -170,6 +203,7 @@ function renderMinerTable(minerResults) {
         const tr = document.createElement('tr');
         tr.className = r.status === expandedMinerId ? 'expanded' : '';
         tr.onclick = () => openDetailPanel(r);
+        var poolCell = renderPoolCell(m.id);
         tr.innerHTML = `
             <td>${esc(m.name)}</td>
             <td>${esc(m.model)}</td>
@@ -185,6 +219,7 @@ function renderMinerTable(minerResults) {
             <td class="${profitClass(profitPerKw)}">${formatCurrency(profitPerKw)}</td>
             <td>${r.roi && r.roi.days_to_roi > 0 ? r.roi.days_to_roi + 'd' : '--'}</td>
             <td><span class="status-badge status-${r.status}">${r.status}</span></td>
+            <td>${poolCell}</td>
             <td class="action-btns" onclick="event.stopPropagation()">
                 <button class="btn-sm" onclick="editMiner('${m.id}')" title="Edit">&#9998;</button>
                 <button class="btn-sm" onclick="duplicateMiner('${m.id}')" title="Duplicate">&#10697;</button>
@@ -214,7 +249,7 @@ function renderMinerTable(minerResults) {
         <td style="font-weight:700;color:var(--profit-red)">${formatCurrency(totalElec)}</td>
         <td class="best-profit ${profitClass(totalProfit)}" style="font-weight:700;">${formatCurrency(totalProfit)}</td>
         <td style="font-weight:700;" class="${profitClass(totalWatts > 0 ? (totalProfit / totalWatts) * 1000 : 0)}">${totalWatts > 0 ? formatCurrency((totalProfit / totalWatts) * 1000) : '--'}</td>
-        <td colspan="3"></td>
+        <td colspan="4"></td>
     `;
     tbody.appendChild(totalTr);
 
@@ -494,6 +529,19 @@ function esc(str) {
 
 function showLoading(show) {
     document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none';
+}
+
+function renderPoolCell(minerId) {
+    if (!poolData || !poolData.statuses) return '<span style="color:var(--text-muted);font-size:0.75rem;">--</span>';
+    var w = poolData.statuses[minerId];
+    if (!w) return '<span style="color:var(--text-muted);font-size:0.75rem;">--</span>';
+    if (w.online) {
+        return '<span class="pool-status pool-online" title="' + esc(w.worker_name) + ' - ' + w.hashrate + ' ' + w.hashrate_units + '">' +
+            '<span class="pool-dot online"></span> ' + w.hashrate + ' ' + w.hashrate_units + '</span>';
+    } else {
+        return '<span class="pool-status pool-offline" title="' + esc(w.worker_name) + ' - OFFLINE">' +
+            '<span class="pool-dot offline"></span> Offline</span>';
+    }
 }
 
 function formatWatts(power) {
