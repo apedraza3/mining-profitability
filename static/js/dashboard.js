@@ -51,6 +51,7 @@ async function loadDashboard() {
         renderSummary(dashboardData.summary);
         renderLocationBreakdown(dashboardData.by_location);
         renderMinerTable(dashboardData.miners);
+        renderSuggestions(dashboardData.suggestions || []);
         updateSourceIndicators(dashboardData.cache_status);
         document.getElementById('lastUpdated').textContent =
             'Updated: ' + new Date(dashboardData.last_updated).toLocaleString();
@@ -1083,6 +1084,30 @@ async function loadWalletSummary() {
     } catch (err) {
         console.error('Failed to load wallet summary', err);
     }
+}
+
+function renderSuggestions(suggestions) {
+    var container = document.getElementById('suggestionsContainer');
+    if (!container) return;
+    if (!suggestions || suggestions.length === 0) {
+        container.style.display = 'none';
+        return;
+    }
+    container.style.display = '';
+    var html = '';
+    suggestions.forEach(function (s) {
+        var icon, cls;
+        switch (s.priority) {
+            case 'high': icon = '!'; cls = 'suggestion-high'; break;
+            case 'medium': icon = '~'; cls = 'suggestion-medium'; break;
+            default: icon = 'i'; cls = 'suggestion-info'; break;
+        }
+        html += '<div class="suggestion-item ' + cls + '">' +
+            '<span class="suggestion-icon">' + icon + '</span>' +
+            '<span>' + esc(s.message) + '</span>' +
+            '</div>';
+    });
+    document.getElementById('suggestionsList').innerHTML = html;
 }
 
 async function loadSolarMining() {

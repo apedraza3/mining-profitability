@@ -333,10 +333,152 @@ class ProfitabilityEngine:
             "status": "inactive" if is_inactive else self._get_status(best_daily),
         }
 
+    def _fetch_live_solar(self) -> dict | None:
+        """Fetch live solar data from electricity dashboard."""
+        import os
+        try:
+            import requests
+            api = os.getenv("ELECTRICITY_API_URL", "http://127.0.0.1:5001")
+            resp = requests.get(f"{api}/api/realtime", timeout=3)
+            if resp.ok:
+                data = resp.json()
+                if data.get("status") == "ok":
+                    return data
+        except Exception as e:
+            logger.debug("Live solar fetch failed: %s", e)
+        return None
+
+    def _inject_live_solar(self, locations: dict) -> None:
+        """Inject live solar production into home location's solar_daily_kwh."""
+        solar_data = self._fetch_live_solar()
+        if not solar_data:
+            return
+
+        solar_w = solar_data.get("solar_production_w", 0)
+        consumption_w = solar_data.get("house_consumption_w", 0)
+        crypto_w = solar_data.get("crypto_mining_w", 0)
+        if solar_w <= 0:
+            return
+
+        # Find the home location and inject solar data
+        for loc_id, loc in locations.items():
+            if loc.get("name", "").lower() == "home":
+                # Estimate daily solar kWh: current production * typical sun hours
+                # Use crypto's proportional share of solar, not all of it
+                if consumption_w > 0:
+                    crypto_share = min(crypto_w / consumption_w, 1.0)
+                    crypto_solar_w = min(solar_w, consumption_w) * crypto_share
+                else:
+                    crypto_solar_w = 0
+                # Convert current watts to estimated daily kWh (use 5 peak sun hours)
+                solar_daily_kwh = crypto_solar_w * 5 / 1000
+                loc["solar_daily_kwh"] = solar_daily_kwh
+                loc["_live_solar"] = {
+                    "solar_w": solar_w,
+                    "consumption_w": consumption_w,
+                    "crypto_w": crypto_w,
+                    "crypto_solar_w": crypto_solar_w,
+                }
+                logger.debug(
+                    "Injected live solar: %.0fW solar, %.0fW crypto share → %.1f kWh/day",
+                    solar_w, crypto_solar_w, solar_daily_kwh,
+                )
+                break
+
+    def generate_suggestions(self, results: list, summary: dict, by_location: dict) -> list:
+        """Generate actionable suggestions based on profitability data."""
+        suggestions = []
+        active = [r for r in results if r["status"] != "inactive"]
+
+        # 1. Unprofitable miners — suggest shutdown
+        unprofitable = [r for r in active if r["status"] == "unprofitable"]
+        for r in unprofitable:
+            name = r["miner"].get("name", "Unknown")
+            daily_loss = abs(r.get("best_daily_profit", 0))
+            monthly_loss = daily_loss * 30
+            suggestions.append({
+                "type": "shutdown",
+                "priority": "high",
+                "miner": name,
+                "message": f"{name} is losing ${daily_loss:.2f}/day (${monthly_loss:.2f}/mo). Consider shutting it down.",
+                "savings": monthly_loss,
+            })
+
+        # 2. Marginal miners — warn
+        marginal = [r for r in active if r["status"] == "marginal"]
+        for r in marginal:
+            name = r["miner"].get("name", "Unknown")
+            daily = r.get("best_daily_profit", 0)
+            loc_name = r["location"].get("name", "")
+            solar = r["solar"]
+            if solar.get("offset_pct", 0) > 0 and solar.get("daily_profit") is not None:
+                if solar["daily_profit"] > daily:
+                    suggestions.append({
+                        "type": "solar_helps",
+                        "priority": "info",
+                        "miner": name,
+                        "message": f"{name} earns ${daily:.2f}/day but ${solar['daily_profit']:.2f}/day with solar offset.",
+                    })
+            elif loc_name.lower() == "home" and daily < 0.50:
+                suggestions.append({
+                    "type": "marginal_warning",
+                    "priority": "medium",
+                    "miner": name,
+                    "message": f"{name} is barely profitable at ${daily:.2f}/day. Monitor closely.",
+                })
+
+        # 3. Total fleet savings from shutting down losers
+        total_loss = sum(abs(r.get("best_daily_profit", 0)) for r in unprofitable)
+        if total_loss > 0:
+            suggestions.append({
+                "type": "fleet_savings",
+                "priority": "high",
+                "message": f"Shutting down all unprofitable miners would save ${total_loss:.2f}/day (${total_loss * 30:.2f}/mo).",
+                "savings": total_loss * 30,
+            })
+
+        # 4. Solar benefit summary for home miners
+        home_miners = [r for r in active if r["location"].get("name", "").lower() == "home"]
+        home_solar_savings = sum((r["solar"].get("daily_savings") or 0) for r in home_miners)
+        if home_solar_savings > 0:
+            suggestions.append({
+                "type": "solar_summary",
+                "priority": "info",
+                "message": f"Solar is saving ${home_solar_savings:.2f}/day (${home_solar_savings * 30:.2f}/mo) on home miners.",
+            })
+
+        # 5. Efficiency comparison — suggest moving miners to cheaper locations
+        if len(by_location) > 1:
+            loc_rates = {}
+            for loc_name, loc_data in by_location.items():
+                loc_rates[loc_name] = loc_data.get("electricity_cost_kwh", 0)
+            cheapest_loc = min(loc_rates, key=loc_rates.get)
+            cheapest_rate = loc_rates[cheapest_loc]
+            for r in active:
+                loc_name = r["location"].get("name", "")
+                rate = r["location"].get("electricity_cost_kwh", 0)
+                if rate > cheapest_rate * 1.2 and r["status"] in ("marginal", "unprofitable"):
+                    name = r["miner"].get("name", "Unknown")
+                    suggestions.append({
+                        "type": "relocate",
+                        "priority": "medium",
+                        "miner": name,
+                        "message": f"{name} pays ${rate:.4f}/kWh at {loc_name}. Moving to {cheapest_loc} (${cheapest_rate:.4f}/kWh) could improve profit.",
+                    })
+
+        # Sort: high priority first
+        priority_order = {"high": 0, "medium": 1, "info": 2}
+        suggestions.sort(key=lambda s: priority_order.get(s.get("priority", "info"), 9))
+
+        return suggestions
+
     def calculate_all(self) -> dict:
         """Calculate profitability for all miners in inventory."""
         miners = self.inventory.get_all_miners()
         locations = {l["id"]: l for l in self.inventory.get_all_locations()}
+
+        # Inject live solar data from electricity dashboard for home location
+        self._inject_live_solar(locations)
 
         # Pre-calculate total wattage per location for solar offset distribution
         location_watts = {}
@@ -427,6 +569,9 @@ class ProfitabilityEngine:
                 r.get("best_daily_profit", 0) * r["miner"].get("quantity", 1)
             )
 
+        # Generate suggestions
+        suggestions = self.generate_suggestions(results, None, by_location)
+
         # Cache status
         cache_status = {
             "whattomine_age": self._format_age(
@@ -440,6 +585,7 @@ class ProfitabilityEngine:
 
         return {
             "miners": results,
+            "suggestions": suggestions,
             "summary": {
                 "total_miners": len(miners),
                 "total_units": sum(m.get("quantity", 1) for m in miners),
