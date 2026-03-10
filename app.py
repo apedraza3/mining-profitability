@@ -702,6 +702,71 @@ def difficulty_history():
     return jsonify(results)
 
 
+# ---- Electricity Dashboard Integration ----
+
+ELECTRICITY_API = os.getenv("ELECTRICITY_API_URL", "http://127.0.0.1:5001")
+
+
+@app.route("/api/electricity/solar-mining", methods=["GET"])
+@login_required
+def solar_mining_summary():
+    """Fetch live solar + crypto data from the electricity dashboard."""
+    import requests as req
+
+    try:
+        rt = req.get(f"{ELECTRICITY_API}/api/realtime", timeout=5).json()
+        summary = req.get(f"{ELECTRICITY_API}/api/summary", timeout=5).json()
+        roi = req.get(f"{ELECTRICITY_API}/api/solar/roi", timeout=5).json()
+
+        solar_w = rt.get("solar_production_w", 0)
+        crypto_w = rt.get("crypto_mining_w", 0)
+        consumption_w = rt.get("house_consumption_w", 0)
+        net_grid_w = rt.get("net_grid_w", 0)
+
+        # Solar covers the whole house proportionally; crypto's share:
+        solar_offset_w = min(solar_w, consumption_w) if consumption_w > 0 else 0
+        crypto_share = crypto_w / consumption_w if consumption_w > 0 else 0
+        crypto_solar_offset_w = solar_offset_w * crypto_share
+
+        energy_rate = summary.get("energy_rate", 0.08907)
+
+        # Daily projections from current reading
+        crypto_daily_cost = (crypto_w / 1000) * 24 * energy_rate
+        crypto_solar_savings_daily = (crypto_solar_offset_w / 1000) * 24 * energy_rate
+        net_crypto_daily_cost = crypto_daily_cost - crypto_solar_savings_daily
+
+        return jsonify({
+            "connected": True,
+            "realtime": {
+                "solar_w": round(solar_w, 0),
+                "crypto_w": round(crypto_w, 0),
+                "consumption_w": round(consumption_w, 0),
+                "net_grid_w": round(net_grid_w, 0),
+                "solar_offset_pct": round((solar_w / consumption_w * 100) if consumption_w > 0 else 0, 1),
+                "crypto_solar_offset_w": round(crypto_solar_offset_w, 0),
+            },
+            "daily": {
+                "crypto_cost_no_solar": round(crypto_daily_cost, 2),
+                "crypto_solar_savings": round(crypto_solar_savings_daily, 2),
+                "net_crypto_cost": round(net_crypto_daily_cost, 2),
+            },
+            "monthly": {
+                "crypto_cost_no_solar": round(crypto_daily_cost * 30, 2),
+                "crypto_solar_savings": round(crypto_solar_savings_daily * 30, 2),
+                "net_crypto_cost": round(net_crypto_daily_cost * 30, 2),
+            },
+            "roi": {
+                "payback_pct": roi.get("payback_pct", 0),
+                "total_savings": roi.get("total_savings", 0),
+                "net_cost": roi.get("net_cost", 0),
+                "months_to_payback": roi.get("months_to_payback", 0),
+            },
+        })
+    except Exception as e:
+        logger.debug("Electricity dashboard not available: %s", e)
+        return jsonify({"connected": False})
+
+
 if __name__ == "__main__":
     app.run(
         host=config.FLASK_HOST,

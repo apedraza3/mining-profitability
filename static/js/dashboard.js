@@ -25,8 +25,11 @@ document.addEventListener('DOMContentLoaded', () => {
     loadProfitHistory();
     loadUptimeStats();
     loadWalletSummary();
+    loadSolarMining();
     // Refresh pool status every 2 minutes
     poolRefreshInterval = setInterval(loadPoolStatus, 2 * 60 * 1000);
+    // Refresh solar data every 5 minutes
+    setInterval(loadSolarMining, 5 * 60 * 1000);
 
     autoRefreshEl.addEventListener('change', (e) => {
         if (e.target.checked) {
@@ -916,9 +919,11 @@ function updateSummaryStripLayout() {
     if (!strip) return;
     var extraVisible = strip.querySelectorAll('.summary-card[style*="display: none"]').length < strip.querySelectorAll('.summary-card[style]').length;
     // Check if any optional cards are visible
-    var fleet = document.getElementById('fleetHealthCard');
-    var solar = document.getElementById('solarSavingsCard');
-    var hasExtra = (fleet && fleet.style.display !== 'none') || (solar && solar.style.display !== 'none');
+    var optionalCards = ['fleetHealthCard', 'solarSavingsCard', 'solarMiningCard', 'walletCard'];
+    var hasExtra = optionalCards.some(function(id) {
+        var el = document.getElementById(id);
+        return el && el.style.display !== 'none';
+    });
     strip.classList.toggle('has-extra', hasExtra);
 }
 
@@ -1077,5 +1082,37 @@ async function loadWalletSummary() {
         }
     } catch (err) {
         console.error('Failed to load wallet summary', err);
+    }
+}
+
+async function loadSolarMining() {
+    try {
+        const resp = await fetch('/api/electricity/solar-mining');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!data.connected) return;
+
+        var card = document.getElementById('solarMiningCard');
+        card.style.display = '';
+
+        var rt = data.realtime;
+        var daily = data.daily;
+        var monthly = data.monthly;
+
+        // Main value: daily solar savings on crypto
+        var el = document.getElementById('solarMiningValue');
+        el.textContent = '-' + formatCurrency(daily.crypto_solar_savings) + '/day';
+        el.className = 'summary-value profit-positive';
+
+        // Sub: solar power now + monthly projection
+        var solarKw = (rt.solar_w / 1000).toFixed(1);
+        var offsetPct = rt.solar_offset_pct.toFixed(0);
+        document.getElementById('solarMiningSub').innerHTML =
+            '\u2600 ' + solarKw + ' kW now \u00B7 ' + offsetPct + '% offset<br>' +
+            formatCurrency(monthly.crypto_solar_savings) + '/mo saved on mining';
+
+        updateSummaryStripLayout();
+    } catch (err) {
+        console.error('Failed to load solar mining data', err);
     }
 }
