@@ -138,9 +138,11 @@ function renderSummary(summary) {
     if (!summary) return;
     var hasSolar = summary.total_solar_savings > 0;
     var dp = hasSolar ? summary.total_solar_profit : summary.total_daily_profit;
-    var mp = dp * 30;
+    var demandDaily = (summary.home_demand_charge || 0) / 30;
+    var trueDP = dp - demandDaily;
+    var mp = trueDP * 30;
 
-    setProfit('totalDailyProfit', dp);
+    setProfit('totalDailyProfit', trueDP);
     setProfit('totalMonthlyProfit', mp);
     document.getElementById('totalInvestment').textContent = formatCurrency(summary.total_investment);
     document.getElementById('portfolioRoi').textContent =
@@ -149,6 +151,19 @@ function renderSummary(summary) {
         `${summary.profitable_count} / ${summary.unprofitable_count}`;
     document.getElementById('minerCountsSub').textContent =
         `profitable / unprofitable (${summary.marginal_count} marginal)`;
+
+    // Demand charge display
+    var demandEl = document.getElementById('demandChargeCard');
+    if (demandEl) {
+        if (summary.home_demand_charge > 0) {
+            demandEl.style.display = '';
+            document.getElementById('demandChargeValue').textContent = formatCurrency(summary.home_demand_charge) + '/mo';
+            document.getElementById('demandChargeSub').textContent =
+                summary.home_mining_kw.toFixed(1) + ' kW peak \u00D7 $' + summary.demand_rate.toFixed(2) + '/kW';
+        } else {
+            demandEl.style.display = 'none';
+        }
+    }
 
     // Solar savings display
     var solarEl = document.getElementById('solarSavingsCard');
@@ -920,7 +935,7 @@ function updateSummaryStripLayout() {
     if (!strip) return;
     var extraVisible = strip.querySelectorAll('.summary-card[style*="display: none"]').length < strip.querySelectorAll('.summary-card[style]').length;
     // Check if any optional cards are visible
-    var optionalCards = ['fleetHealthCard', 'solarSavingsCard', 'solarMiningCard', 'walletCard'];
+    var optionalCards = ['fleetHealthCard', 'demandChargeCard', 'solarSavingsCard', 'solarMiningCard', 'walletCard'];
     var hasExtra = optionalCards.some(function(id) {
         var el = document.getElementById(id);
         return el && el.style.display !== 'none';

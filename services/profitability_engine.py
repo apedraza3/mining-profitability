@@ -333,78 +333,134 @@ class ProfitabilityEngine:
             "status": "inactive" if is_inactive else self._get_status(best_daily),
         }
 
-    def _fetch_live_solar(self) -> dict | None:
-        """Fetch live solar data from electricity dashboard."""
+    def _fetch_electricity_data(self) -> dict | None:
+        """Fetch live solar + settings from electricity dashboard."""
         import os
         try:
             import requests
             api = os.getenv("ELECTRICITY_API_URL", "http://127.0.0.1:5001")
+            realtime = None
+            settings = None
             resp = requests.get(f"{api}/api/realtime", timeout=3)
             if resp.ok:
                 data = resp.json()
                 if data.get("status") == "ok":
-                    return data
+                    realtime = data
+            resp2 = requests.get(f"{api}/api/settings", timeout=3)
+            if resp2.ok:
+                settings = resp2.json()
+            return {"realtime": realtime, "settings": settings}
         except Exception as e:
-            logger.debug("Live solar fetch failed: %s", e)
+            logger.debug("Electricity dashboard fetch failed: %s", e)
         return None
 
-    def _inject_live_solar(self, locations: dict) -> None:
-        """Inject live solar production into home location's solar_daily_kwh."""
-        solar_data = self._fetch_live_solar()
+    def _inject_live_solar(self, locations: dict) -> dict:
+        """Inject live solar production and demand rate into home location.
+
+        Returns electricity settings dict (demand_rate, etc.) or empty dict.
+        """
+        elec_data = self._fetch_electricity_data()
+        if not elec_data:
+            return {}
+
+        settings = elec_data.get("settings") or {}
+        solar_data = elec_data.get("realtime")
         if not solar_data:
-            return
+            return settings
 
         solar_w = solar_data.get("solar_production_w", 0)
         consumption_w = solar_data.get("house_consumption_w", 0)
         crypto_w = solar_data.get("crypto_mining_w", 0)
-        if solar_w <= 0:
-            return
 
-        # Find the home location and inject solar data
+        # Find the home location and inject solar + demand data
         for loc_id, loc in locations.items():
             if loc.get("name", "").lower() == "home":
-                # Estimate daily solar kWh: current production * typical sun hours
-                # Use crypto's proportional share of solar, not all of it
-                if consumption_w > 0:
-                    crypto_share = min(crypto_w / consumption_w, 1.0)
-                    crypto_solar_w = min(solar_w, consumption_w) * crypto_share
-                else:
-                    crypto_solar_w = 0
-                # Convert current watts to estimated daily kWh (use 5 peak sun hours)
-                solar_daily_kwh = crypto_solar_w * 5 / 1000
-                loc["solar_daily_kwh"] = solar_daily_kwh
-                loc["_live_solar"] = {
-                    "solar_w": solar_w,
-                    "consumption_w": consumption_w,
-                    "crypto_w": crypto_w,
-                    "crypto_solar_w": crypto_solar_w,
-                }
-                logger.debug(
-                    "Injected live solar: %.0fW solar, %.0fW crypto share → %.1f kWh/day",
-                    solar_w, crypto_solar_w, solar_daily_kwh,
-                )
+                # Inject demand rate for cost calculations
+                loc["_demand_rate"] = settings.get("demand_rate", 15.38)
+
+                if solar_w > 0:
+                    # Estimate daily solar kWh: current production * typical sun hours
+                    # Use crypto's proportional share of solar, not all of it
+                    if consumption_w > 0:
+                        crypto_share = min(crypto_w / consumption_w, 1.0)
+                        crypto_solar_w = min(solar_w, consumption_w) * crypto_share
+                    else:
+                        crypto_solar_w = 0
+                    # Convert current watts to estimated daily kWh (use 5 peak sun hours)
+                    solar_daily_kwh = crypto_solar_w * 5 / 1000
+                    loc["solar_daily_kwh"] = solar_daily_kwh
+                    loc["_live_solar"] = {
+                        "solar_w": solar_w,
+                        "consumption_w": consumption_w,
+                        "crypto_w": crypto_w,
+                        "crypto_solar_w": crypto_solar_w,
+                    }
+                    logger.debug(
+                        "Injected live solar: %.0fW solar, %.0fW crypto share → %.1f kWh/day",
+                        solar_w, crypto_solar_w, solar_daily_kwh,
+                    )
                 break
 
-    def generate_suggestions(self, results: list, summary: dict, by_location: dict) -> list:
+        return settings
+
+    def generate_suggestions(
+        self, results: list, summary: dict, by_location: dict,
+        demand_rate: float = 0, home_demand: dict | None = None,
+        total_home_demand_charge: float = 0,
+    ) -> list:
         """Generate actionable suggestions based on profitability data."""
         suggestions = []
         active = [r for r in results if r["status"] != "inactive"]
+        home_demand = home_demand or {}
 
-        # 1. Unprofitable miners — suggest shutdown
+        # 1. Demand charge warning — this is often a hidden cost
+        if total_home_demand_charge > 0:
+            home_miners = [r for r in active if r["location"].get("name", "").lower() == "home"]
+            total_home_kw = sum(d["kw"] for d in home_demand.values())
+            suggestions.append({
+                "type": "demand_charge",
+                "priority": "high",
+                "message": f"Home miners add {total_home_kw:.1f} kW peak demand, costing ${total_home_demand_charge:.2f}/mo in demand charges (${demand_rate:.2f}/kW). This is on top of energy costs.",
+            })
+
+            # Per-miner demand charge impact for unprofitable/marginal miners
+            for r in home_miners:
+                name = r["miner"].get("name", "Unknown")
+                d = home_demand.get(name, {})
+                if d and r["status"] in ("unprofitable", "marginal"):
+                    demand_monthly = d["monthly_demand_charge"]
+                    daily_profit = r.get("best_daily_profit", 0)
+                    profit_after_demand = daily_profit - (demand_monthly / 30)
+                    if profit_after_demand < 0:
+                        suggestions.append({
+                            "type": "demand_unprofitable",
+                            "priority": "high",
+                            "miner": name,
+                            "message": f"{name} earns ${daily_profit:.2f}/day but its {d['kw']:.1f} kW adds ${demand_monthly:.2f}/mo in demand charges. True profit: ${profit_after_demand:.2f}/day.",
+                        })
+
+        # 2. Unprofitable miners — suggest shutdown
         unprofitable = [r for r in active if r["status"] == "unprofitable"]
         for r in unprofitable:
             name = r["miner"].get("name", "Unknown")
             daily_loss = abs(r.get("best_daily_profit", 0))
             monthly_loss = daily_loss * 30
+            demand_savings = home_demand.get(name, {}).get("monthly_demand_charge", 0)
+            total_monthly_savings = monthly_loss + demand_savings
+            msg = f"{name} is losing ${daily_loss:.2f}/day (${monthly_loss:.2f}/mo)."
+            if demand_savings > 0:
+                msg += f" Plus ${demand_savings:.2f}/mo in demand charges. Total savings if shut down: ${total_monthly_savings:.2f}/mo."
+            else:
+                msg += " Consider shutting it down."
             suggestions.append({
                 "type": "shutdown",
                 "priority": "high",
                 "miner": name,
-                "message": f"{name} is losing ${daily_loss:.2f}/day (${monthly_loss:.2f}/mo). Consider shutting it down.",
-                "savings": monthly_loss,
+                "message": msg,
+                "savings": total_monthly_savings,
             })
 
-        # 2. Marginal miners — warn
+        # 3. Marginal miners — warn
         marginal = [r for r in active if r["status"] == "marginal"]
         for r in marginal:
             name = r["miner"].get("name", "Unknown")
@@ -427,19 +483,26 @@ class ProfitabilityEngine:
                     "message": f"{name} is barely profitable at ${daily:.2f}/day. Monitor closely.",
                 })
 
-        # 3. Total fleet savings from shutting down losers
+        # 4. Total fleet savings from shutting down losers
         total_loss = sum(abs(r.get("best_daily_profit", 0)) for r in unprofitable)
+        total_demand_savings = sum(
+            home_demand.get(r["miner"].get("name", ""), {}).get("monthly_demand_charge", 0)
+            for r in unprofitable
+        )
         if total_loss > 0:
+            msg = f"Shutting down all unprofitable miners would save ${total_loss:.2f}/day (${total_loss * 30:.2f}/mo) in energy."
+            if total_demand_savings > 0:
+                msg += f" Plus ${total_demand_savings:.2f}/mo in reduced demand charges."
             suggestions.append({
                 "type": "fleet_savings",
                 "priority": "high",
-                "message": f"Shutting down all unprofitable miners would save ${total_loss:.2f}/day (${total_loss * 30:.2f}/mo).",
-                "savings": total_loss * 30,
+                "message": msg,
+                "savings": total_loss * 30 + total_demand_savings,
             })
 
-        # 4. Solar benefit summary for home miners
-        home_miners = [r for r in active if r["location"].get("name", "").lower() == "home"]
-        home_solar_savings = sum((r["solar"].get("daily_savings") or 0) for r in home_miners)
+        # 5. Solar benefit summary for home miners
+        home_miners_list = [r for r in active if r["location"].get("name", "").lower() == "home"]
+        home_solar_savings = sum((r["solar"].get("daily_savings") or 0) for r in home_miners_list)
         if home_solar_savings > 0:
             suggestions.append({
                 "type": "solar_summary",
@@ -447,7 +510,27 @@ class ProfitabilityEngine:
                 "message": f"Solar is saving ${home_solar_savings:.2f}/day (${home_solar_savings * 30:.2f}/mo) on home miners.",
             })
 
-        # 5. Efficiency comparison — suggest moving miners to cheaper locations
+        # 6. Peak demand reduction tip
+        if total_home_demand_charge > 0 and len(home_miners_list) > 1:
+            # Find the most power-hungry marginal/unprofitable home miner
+            candidates = sorted(
+                [r for r in home_miners_list if r["status"] in ("marginal", "unprofitable")],
+                key=lambda r: r["power"]["effective_watts"],
+                reverse=True,
+            )
+            if candidates:
+                worst = candidates[0]
+                worst_name = worst["miner"].get("name", "Unknown")
+                worst_kw = worst["power"]["effective_watts"] / 1000
+                saved = round(worst_kw * demand_rate, 2)
+                suggestions.append({
+                    "type": "peak_reduction",
+                    "priority": "medium",
+                    "miner": worst_name,
+                    "message": f"Shutting down {worst_name} ({worst_kw:.1f} kW) would reduce peak demand by {worst_kw:.1f} kW, saving ${saved:.2f}/mo in demand charges alone.",
+                })
+
+        # 7. Efficiency comparison — suggest moving miners to cheaper locations
         if len(by_location) > 1:
             loc_rates = {}
             for loc_name, loc_data in by_location.items():
@@ -477,8 +560,8 @@ class ProfitabilityEngine:
         miners = self.inventory.get_all_miners()
         locations = {l["id"]: l for l in self.inventory.get_all_locations()}
 
-        # Inject live solar data from electricity dashboard for home location
-        self._inject_live_solar(locations)
+        # Inject live solar data and demand rate from electricity dashboard
+        elec_settings = self._inject_live_solar(locations)
 
         # Pre-calculate total wattage per location for solar offset distribution
         location_watts = {}
@@ -569,8 +652,31 @@ class ProfitabilityEngine:
                 r.get("best_daily_profit", 0) * r["miner"].get("quantity", 1)
             )
 
+        # Calculate demand charges for home miners
+        demand_rate = elec_settings.get("demand_rate", 0)
+        home_demand = {}
+        if demand_rate > 0:
+            for r in active:
+                if r["location"].get("name", "").lower() == "home":
+                    w = r["power"]["effective_watts"] * r["miner"].get("quantity", 1)
+                    home_demand[r["miner"].get("name", "")] = {
+                        "watts": w,
+                        "kw": w / 1000,
+                        "monthly_demand_charge": round((w / 1000) * demand_rate, 2),
+                    }
+            total_home_kw = sum(d["kw"] for d in home_demand.values())
+            total_home_demand_charge = round(total_home_kw * demand_rate, 2)
+        else:
+            total_home_kw = 0
+            total_home_demand_charge = 0
+
         # Generate suggestions
-        suggestions = self.generate_suggestions(results, None, by_location)
+        suggestions = self.generate_suggestions(
+            results, None, by_location,
+            demand_rate=demand_rate,
+            home_demand=home_demand,
+            total_home_demand_charge=total_home_demand_charge,
+        )
 
         # Cache status
         cache_status = {
@@ -605,6 +711,9 @@ class ProfitabilityEngine:
                 "total_solar_savings": round(total_solar_savings, 2),
                 "total_solar_electricity": round(total_solar_elec, 2),
                 "total_solar_profit": round(total_solar_profit, 2),
+                "demand_rate": demand_rate,
+                "home_mining_kw": round(total_home_kw, 2),
+                "home_demand_charge": total_home_demand_charge,
             },
             "by_location": by_location,
             "last_updated": datetime.now().isoformat(),
