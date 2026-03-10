@@ -1110,9 +1110,35 @@ function renderSuggestions(suggestions) {
         container.style.display = 'none';
         return;
     }
-    container.style.display = '';
-    var html = '';
+
+    // Group relocate suggestions into one
+    var grouped = [];
+    var relocateMiners = [];
     suggestions.forEach(function (s) {
+        if (s.type === 'relocate') {
+            relocateMiners.push(s.miner || 'Unknown');
+        } else {
+            grouped.push(s);
+        }
+    });
+    if (relocateMiners.length > 0) {
+        grouped.push({
+            priority: 'medium',
+            message: relocateMiners.length + ' marginal miner' + (relocateMiners.length > 1 ? 's' : '') +
+                ' (' + relocateMiners.join(', ') + ') could save money by moving to a cheaper hosting location.',
+        });
+    }
+
+    container.style.display = '';
+    var countEl = document.getElementById('suggestionsCount');
+    if (countEl) {
+        var highCount = grouped.filter(function (s) { return s.priority === 'high'; }).length;
+        countEl.textContent = highCount > 0 ? highCount + ' alert' + (highCount > 1 ? 's' : '') : grouped.length;
+        countEl.className = 'suggestions-badge' + (highCount > 0 ? ' badge-high' : '');
+    }
+
+    var html = '';
+    grouped.forEach(function (s) {
         var icon, cls;
         switch (s.priority) {
             case 'high': icon = '!'; cls = 'suggestion-high'; break;
@@ -1125,6 +1151,18 @@ function renderSuggestions(suggestions) {
             '</div>';
     });
     document.getElementById('suggestionsList').innerHTML = html;
+}
+
+function toggleSuggestions() {
+    var list = document.getElementById('suggestionsList');
+    var icon = document.getElementById('suggestionsToggle');
+    if (list.style.display === 'none') {
+        list.style.display = '';
+        icon.className = 'toggle-icon';
+    } else {
+        list.style.display = 'none';
+        icon.className = 'toggle-icon collapsed';
+    }
 }
 
 async function loadSolarMining() {

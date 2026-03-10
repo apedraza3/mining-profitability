@@ -153,8 +153,11 @@
 
     <!-- Suggestions -->
     <section class="suggestions-section" id="suggestionsContainer" style="display:none;">
-        <h2>Suggestions</h2>
-        <div id="suggestionsList"></div>
+        <div class="suggestions-header" onclick="toggleSuggestions()">
+            <h2>Suggestions <span id="suggestionsCount" class="suggestions-badge">0</span></h2>
+            <span class="toggle-icon collapsed" id="suggestionsToggle">&#9660;</span>
+        </div>
+        <div id="suggestionsList" style="display:none;"></div>
     </section>
 
     <!-- Analysis Tools (Breakeven + Scenario stay on dashboard) -->
