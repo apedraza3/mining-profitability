@@ -147,10 +147,12 @@ function renderSummary(summary) {
     document.getElementById('totalInvestment').textContent = formatCurrency(summary.total_investment);
     document.getElementById('portfolioRoi').textContent =
         summary.portfolio_roi_days > 0 ? `ROI in ${summary.portfolio_roi_days} days` : '--';
-    document.getElementById('minerCounts').textContent =
-        `${summary.profitable_count} / ${summary.unprofitable_count}`;
-    document.getElementById('minerCountsSub').textContent =
-        `profitable / unprofitable (${summary.marginal_count} marginal)`;
+    var minerCountsEl = document.getElementById('minerCounts');
+    if (minerCountsEl) {
+        minerCountsEl.textContent = `${summary.profitable_count} / ${summary.unprofitable_count}`;
+        document.getElementById('minerCountsSub').textContent =
+            `profitable / unprofitable (${summary.marginal_count} marginal)`;
+    }
 
     // Demand charge display
     var demandEl = document.getElementById('demandChargeCard');
@@ -1139,10 +1141,10 @@ async function loadSolarMining() {
         var daily = data.daily;
         var monthly = data.monthly;
 
-        // Main value: daily solar savings on crypto
+        // Main value: net crypto electricity cost after solar
         var el = document.getElementById('solarMiningValue');
-        el.textContent = '-' + formatCurrency(daily.crypto_solar_savings) + '/day';
-        el.className = 'summary-value profit-positive';
+        el.textContent = formatCurrency(daily.net_crypto_cost) + '/day';
+        el.className = 'summary-value ' + (daily.net_crypto_cost <= 0 ? 'profit-positive' : 'profit-negative');
 
         // Sub: solar power now + monthly projection
         var solarKw = (rt.solar_w / 1000).toFixed(1);
