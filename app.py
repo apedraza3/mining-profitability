@@ -292,7 +292,10 @@ def pool_summary():
                 "daily_revenue": r.get("daily_revenue", 0),
                 "status": r.get("status", ""),
             })
-        return jsonify({"miners": miners})
+        return jsonify({
+            "miners": miners,
+            "powerpool_configured": powerpool_svc.is_configured(),
+        })
     except Exception as e:
         logger.error("Pool summary failed: %s", e)
         return jsonify({"error": str(e)}), 500

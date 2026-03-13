@@ -5,35 +5,40 @@ const POOL_DATA = {
     "SHA-256": [
         { name: "Foundry USA", fee: "0%", payout: "FPPS", minPayout: "0.01 BTC", note: "Largest US pool" },
         { name: "Ocean", fee: "0% + tips", payout: "TIDES", minPayout: "0.0001 BTC", note: "Transparent, non-custodial" },
+        { name: "DEMAND", fee: "0%", payout: "FPPS", minPayout: "0.005 BTC", note: "Newer entrant" },
+        { name: "PowerPool", fee: "1%", payout: "PPS+", minPayout: "USDC/BTC", note: "Multi-algo, no withdrawal fees" },
         { name: "ViaBTC", fee: "1-4%", payout: "PPS+/PPLNS", minPayout: "0.0001 BTC", note: "1% PPLNS, 4% PPS+" },
-        { name: "F2Pool", fee: "2.5%", payout: "PPS+", minPayout: "0.005 BTC", note: "Large global pool" },
         { name: "Antpool", fee: "1-4%", payout: "PPS+/PPLNS", minPayout: "0.001 BTC", note: "Bitmain affiliated" },
         { name: "Braiins Pool", fee: "2%", payout: "Score", minPayout: "0.001 BTC", note: "Formerly Slush" },
-        { name: "DEMAND", fee: "0%", payout: "FPPS", minPayout: "0.005 BTC", note: "Newer entrant" },
+        { name: "F2Pool", fee: "2.5%", payout: "PPS+", minPayout: "0.005 BTC", note: "Large global pool" },
     ],
     "Scrypt": [
         { name: "LitecoinPool", fee: "0%", payout: "PPS", minPayout: "0.01 LTC", note: "Merged LTC+DOGE, no fees" },
-        { name: "ViaBTC", fee: "2-4%", payout: "PPS+/PPLNS", minPayout: "0.001 LTC", note: "2% PPLNS, 4% PPS" },
-        { name: "F2Pool", fee: "2.5%", payout: "PPS+", minPayout: "0.001 LTC", note: "Merged mining" },
-        { name: "Antpool", fee: "1-3%", payout: "PPS+/PPLNS", minPayout: "0.001 LTC", note: "Merged mining" },
+        { name: "PowerPool", fee: "1%", payout: "PPS+", minPayout: "USDC/LTC", note: "Multi-algo, no withdrawal fees" },
         { name: "ProHashing", fee: "1.99%", payout: "PPS", minPayout: "Variable", note: "Auto-switches coins" },
+        { name: "ViaBTC", fee: "2-4%", payout: "PPS+/PPLNS", minPayout: "0.001 LTC", note: "2% PPLNS, 4% PPS" },
+        { name: "Antpool", fee: "1-3%", payout: "PPS+/PPLNS", minPayout: "0.001 LTC", note: "Merged mining" },
+        { name: "F2Pool", fee: "2.5%", payout: "PPS+", minPayout: "0.001 LTC", note: "Merged mining" },
     ],
     "Equihash": [
-        { name: "ViaBTC", fee: "2-4%", payout: "PPS+/PPLNS", minPayout: "0.001 ZEC", note: "" },
-        { name: "F2Pool", fee: "3%", payout: "PPS+", minPayout: "0.001 ZEC", note: "" },
         { name: "Flypool", fee: "1%", payout: "PPLNS", minPayout: "0.001 ZEC", note: "Ethermine/Bitfly" },
         { name: "2Miners", fee: "1%", payout: "PPLNS", minPayout: "0.01 ZEC", note: "" },
+        { name: "PowerPool", fee: "1%", payout: "PPS+", minPayout: "USDC/ZEC", note: "Multi-algo, no withdrawal fees" },
+        { name: "ViaBTC", fee: "2-4%", payout: "PPS+/PPLNS", minPayout: "0.001 ZEC", note: "" },
+        { name: "F2Pool", fee: "3%", payout: "PPS+", minPayout: "0.001 ZEC", note: "" },
     ],
     "KHeavyHash": [
-        { name: "F2Pool", fee: "1%", payout: "PPS+", minPayout: "1 KAS", note: "" },
         { name: "ACC Pool", fee: "0.5%", payout: "PPLNS", minPayout: "10 KAS", note: "" },
-        { name: "Kaspium", fee: "1%", payout: "PPLNS", minPayout: "5 KAS", note: "Kaspa-focused" },
         { name: "HeroMiners", fee: "0.9%", payout: "PROP", minPayout: "5 KAS", note: "" },
+        { name: "PowerPool", fee: "1%", payout: "PPS+", minPayout: "USDC/KAS", note: "Multi-algo, no withdrawal fees" },
+        { name: "F2Pool", fee: "1%", payout: "PPS+", minPayout: "1 KAS", note: "" },
+        { name: "Kaspium", fee: "1%", payout: "PPLNS", minPayout: "5 KAS", note: "Kaspa-focused" },
     ],
     "Etchash": [
         { name: "F2Pool", fee: "1%", payout: "PPS+", minPayout: "0.1 ETC", note: "" },
         { name: "2Miners", fee: "1%", payout: "PPLNS", minPayout: "0.01 ETC", note: "" },
         { name: "Ethermine", fee: "1%", payout: "PPLNS", minPayout: "0.01 ETC", note: "Now Bitfly" },
+        { name: "PowerPool", fee: "1%", payout: "PPS+", minPayout: "USDC/ETC", note: "Multi-algo, no withdrawal fees" },
         { name: "ViaBTC", fee: "2-4%", payout: "PPS+/PPLNS", minPayout: "0.1 ETC", note: "" },
     ],
 };
@@ -231,18 +236,12 @@ async function runSwapComparison() {
 
 // ---- Pool Fee Comparison ----
 
-// Persist user's pool selections in localStorage
-var _userPoolSelections = JSON.parse(localStorage.getItem('poolSelections') || '{}');
-
-function savePoolSelection(algo, poolName) {
-    _userPoolSelections[algo] = poolName;
-    localStorage.setItem('poolSelections', JSON.stringify(_userPoolSelections));
-    renderPoolComparison();
-}
-
 function renderPoolComparison() {
     var container = document.getElementById('poolComparisonContent');
     if (!container || !dashboardData) return;
+
+    // Auto-detect current pool: if PowerPool is configured, that's what they're using
+    var currentPoolName = dashboardData.powerpool_configured ? 'PowerPool' : '';
 
     // Find which algorithms are in use
     var algos = new Set();
@@ -285,12 +284,11 @@ function renderPoolComparison() {
         var maxSavings = worst.annualFee - best.annualFee;
         var totalPools = poolsWithFees.length;
 
-        // Get user's selected pool for this algo
-        var selectedPool = _userPoolSelections[algo] || '';
+        // Find current pool rank
         var currentRank = -1;
-        if (selectedPool) {
+        if (currentPoolName) {
             poolsWithFees.forEach((pf, i) => {
-                if (pf.pool.name === selectedPool) currentRank = i + 1;
+                if (pf.pool.name === currentPoolName) currentRank = i + 1;
             });
         }
 
@@ -305,22 +303,11 @@ function renderPoolComparison() {
         html += '<div class="pool-card-rev">' + formatCurrency(dailyRev) + '/day revenue</div>';
         html += '</div>';
 
-        // Your pool selector
-        html += '<div class="pool-card-selector">';
-        html += '<label class="pool-card-selector-label">Your current pool:</label>';
-        html += '<select class="pool-card-select" onchange="savePoolSelection(\'' + esc(algo) + '\', this.value)">';
-        html += '<option value="">Select your pool...</option>';
-        pools.forEach(p => {
-            html += '<option value="' + esc(p.name) + '"' + (selectedPool === p.name ? ' selected' : '') + '>' + esc(p.name) + '</option>';
-        });
-        html += '</select>';
-        html += '</div>';
-
-        // Ranking result (if pool selected)
+        // Your ranking
         if (currentRank > 0) {
-            var rankColor = currentRank === 1 ? 'var(--success)' : currentRank <= 2 ? 'var(--warning)' : 'var(--danger)';
+            var rankColor = currentRank === 1 ? 'var(--success)' : currentRank <= Math.ceil(totalPools / 2) ? 'var(--warning)' : 'var(--danger)';
             html += '<div class="pool-card-rank">';
-            html += '<span class="pool-card-rank-label">Your pool is ranked</span>';
+            html += '<span class="pool-card-rank-label">You\'re on <strong>' + esc(currentPoolName) + '</strong> — ranked</span>';
             html += '<span class="pool-card-rank-value" style="color:' + rankColor + '">' + currentRank + ' of ' + totalPools + '</span>';
             if (currentRank === 1) {
                 html += '<span class="pool-card-rank-tip" style="color:var(--success)">You\'re on the best pool!</span>';
