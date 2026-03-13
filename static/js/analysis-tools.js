@@ -230,6 +230,16 @@ async function runSwapComparison() {
 }
 
 // ---- Pool Fee Comparison ----
+
+// Persist user's pool selections in localStorage
+var _userPoolSelections = JSON.parse(localStorage.getItem('poolSelections') || '{}');
+
+function savePoolSelection(algo, poolName) {
+    _userPoolSelections[algo] = poolName;
+    localStorage.setItem('poolSelections', JSON.stringify(_userPoolSelections));
+    renderPoolComparison();
+}
+
 function renderPoolComparison() {
     var container = document.getElementById('poolComparisonContent');
     if (!container || !dashboardData) return;
@@ -249,23 +259,11 @@ function renderPoolComparison() {
         revenueByAlgo[algo] += (r.daily_revenue || 0) * (r.miner.quantity || 1);
     });
 
-    // Detect current pool from miner data (if pool field exists)
-    var currentPoolByAlgo = {};
-    dashboardData.miners.forEach(r => {
-        if (r.status === 'inactive') return;
-        var algo = r.miner.algorithm;
-        if (r.miner.pool && !currentPoolByAlgo[algo]) {
-            currentPoolByAlgo[algo] = r.miner.pool;
-        }
-    });
-
     var html = '';
-    var algoCount = 0;
 
     algos.forEach(algo => {
         var pools = POOL_DATA[algo];
         if (!pools) return;
-        algoCount++;
 
         var dailyRev = revenueByAlgo[algo] || 0;
 
@@ -287,26 +285,52 @@ function renderPoolComparison() {
         var maxSavings = worst.annualFee - best.annualFee;
         var totalPools = poolsWithFees.length;
 
-        // Detect user's current pool rank
-        var currentPool = currentPoolByAlgo[algo] || '';
+        // Get user's selected pool for this algo
+        var selectedPool = _userPoolSelections[algo] || '';
         var currentRank = -1;
-        if (currentPool) {
+        if (selectedPool) {
             poolsWithFees.forEach((pf, i) => {
-                if (pf.pool.name.toLowerCase().includes(currentPool.toLowerCase()) ||
-                    currentPool.toLowerCase().includes(pf.pool.name.toLowerCase())) {
-                    currentRank = i + 1;
-                }
+                if (pf.pool.name === selectedPool) currentRank = i + 1;
             });
         }
 
-        // Build the card for this algorithm
+        var algoKey = algo.replace(/[^a-zA-Z0-9]/g, '');
+
+        // Build the card
         html += '<div class="pool-card">';
 
-        // Header row
+        // Header
         html += '<div class="pool-card-header">';
         html += '<div class="pool-card-algo">' + esc(algo) + '</div>';
         html += '<div class="pool-card-rev">' + formatCurrency(dailyRev) + '/day revenue</div>';
         html += '</div>';
+
+        // Your pool selector
+        html += '<div class="pool-card-selector">';
+        html += '<label class="pool-card-selector-label">Your current pool:</label>';
+        html += '<select class="pool-card-select" onchange="savePoolSelection(\'' + esc(algo) + '\', this.value)">';
+        html += '<option value="">Select your pool...</option>';
+        pools.forEach(p => {
+            html += '<option value="' + esc(p.name) + '"' + (selectedPool === p.name ? ' selected' : '') + '>' + esc(p.name) + '</option>';
+        });
+        html += '</select>';
+        html += '</div>';
+
+        // Ranking result (if pool selected)
+        if (currentRank > 0) {
+            var rankColor = currentRank === 1 ? 'var(--success)' : currentRank <= 2 ? 'var(--warning)' : 'var(--danger)';
+            html += '<div class="pool-card-rank">';
+            html += '<span class="pool-card-rank-label">Your pool is ranked</span>';
+            html += '<span class="pool-card-rank-value" style="color:' + rankColor + '">' + currentRank + ' of ' + totalPools + '</span>';
+            if (currentRank === 1) {
+                html += '<span class="pool-card-rank-tip" style="color:var(--success)">You\'re on the best pool!</span>';
+            } else {
+                var yourFee = poolsWithFees[currentRank - 1];
+                var savingsVsYou = yourFee.annualFee - best.annualFee;
+                html += '<span class="pool-card-rank-tip">Switch to <strong>' + esc(best.pool.name) + '</strong> to save <strong style="color:var(--success)">' + formatCurrency(savingsVsYou) + '/yr</strong></span>';
+            }
+            html += '</div>';
+        }
 
         // Recommendation
         html += '<div class="pool-card-recommend">';
@@ -318,21 +342,7 @@ function renderPoolComparison() {
         }
         html += '</div>';
 
-        // Your ranking (if detected)
-        if (currentRank > 0) {
-            var rankColor = currentRank === 1 ? 'var(--success)' : currentRank <= 2 ? 'var(--warning)' : 'var(--danger)';
-            html += '<div class="pool-card-rank">';
-            html += '<span class="pool-card-rank-label">Your pool is ranked</span>';
-            html += '<span class="pool-card-rank-value" style="color:' + rankColor + '">' + currentRank + ' of ' + totalPools + '</span>';
-            if (currentRank > 1) {
-                var yourFee = poolsWithFees[currentRank - 1];
-                var savingsVsYou = yourFee.annualFee - best.annualFee;
-                html += '<span class="pool-card-rank-tip">Switch to ' + esc(best.pool.name) + ' to save <strong>' + formatCurrency(savingsVsYou) + '/yr</strong></span>';
-            }
-            html += '</div>';
-        }
-
-        // Pool ranking list (compact)
+        // Pool ranking list
         html += '<div class="pool-card-rankings">';
         poolsWithFees.forEach((pf, i) => {
             var rank = i + 1;
@@ -355,8 +365,8 @@ function renderPoolComparison() {
         }
 
         // Collapsible details
-        html += '<button class="pool-details-toggle" onclick="togglePoolDetails(\'' + algo + '\')">Show full details</button>';
-        html += '<div class="pool-details-table" id="poolDetails_' + algo.replace(/[^a-zA-Z0-9]/g, '') + '" style="display:none;">';
+        html += '<button class="pool-details-toggle" onclick="togglePoolDetails(\'' + algoKey + '\')">Show full details</button>';
+        html += '<div class="pool-details-table" id="poolDetails_' + algoKey + '" style="display:none;">';
         html += '<table class="coin-table"><thead><tr>' +
             '<th>Pool</th><th>Fee</th><th>Payout</th><th>Min Payout</th><th>Daily Fee</th><th>Annual Fee</th><th>Notes</th>' +
             '</tr></thead><tbody>';
@@ -380,9 +390,8 @@ function renderPoolComparison() {
     container.innerHTML = html || '<p style="color:var(--text-muted)">No pool data for your algorithms.</p>';
 }
 
-function togglePoolDetails(algo) {
-    var id = 'poolDetails_' + algo.replace(/[^a-zA-Z0-9]/g, '');
-    var el = document.getElementById(id);
+function togglePoolDetails(algoKey) {
+    var el = document.getElementById('poolDetails_' + algoKey);
     var btn = el.previousElementSibling;
     if (el.style.display === 'none') {
         el.style.display = 'block';
