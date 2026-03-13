@@ -249,52 +249,121 @@ function renderPoolComparison() {
         revenueByAlgo[algo] += (r.daily_revenue || 0) * (r.miner.quantity || 1);
     });
 
-    // Build recommendations and tables per algo
-    var recommendations = [];
+    // Detect current pool from miner data (if pool field exists)
+    var currentPoolByAlgo = {};
+    dashboardData.miners.forEach(r => {
+        if (r.status === 'inactive') return;
+        var algo = r.miner.algorithm;
+        if (r.miner.pool && !currentPoolByAlgo[algo]) {
+            currentPoolByAlgo[algo] = r.miner.pool;
+        }
+    });
+
     var html = '';
+    var algoCount = 0;
+
     algos.forEach(algo => {
         var pools = POOL_DATA[algo];
         if (!pools) return;
+        algoCount++;
 
         var dailyRev = revenueByAlgo[algo] || 0;
 
-        // Parse fees and find best pool (lowest effective fee)
+        // Parse fees and rank pools
         var poolsWithFees = pools.map(p => {
             var feeNum = 0;
             var feeMatch = p.fee.match(/(\d+\.?\d*)%/);
             if (feeMatch) feeNum = parseFloat(feeMatch[1]);
             var feeMatch2 = p.fee.match(/(\d+\.?\d*)-(\d+\.?\d*)%/);
-            if (feeMatch2) feeNum = parseFloat(feeMatch2[2]);  // worst case for ranges
+            if (feeMatch2) feeNum = parseFloat(feeMatch2[2]);
             var lowestFee = feeNum;
-            if (feeMatch2) lowestFee = parseFloat(feeMatch2[1]);  // best case for ranges
+            if (feeMatch2) lowestFee = parseFloat(feeMatch2[1]);
             return { pool: p, worstFee: feeNum, bestFee: lowestFee, dailyFee: dailyRev * (feeNum / 100), annualFee: dailyRev * (feeNum / 100) * 365 };
         });
 
         poolsWithFees.sort((a, b) => a.bestFee - b.bestFee);
         var best = poolsWithFees[0];
         var worst = poolsWithFees[poolsWithFees.length - 1];
-        var savings = worst.annualFee - best.annualFee;
+        var maxSavings = worst.annualFee - best.annualFee;
+        var totalPools = poolsWithFees.length;
 
-        recommendations.push({
-            algo: algo,
-            bestPool: best.pool.name,
-            bestFee: best.pool.fee,
-            bestPayout: best.pool.payout,
-            annualSaved: savings,
-            dailyRev: dailyRev,
+        // Detect user's current pool rank
+        var currentPool = currentPoolByAlgo[algo] || '';
+        var currentRank = -1;
+        if (currentPool) {
+            poolsWithFees.forEach((pf, i) => {
+                if (pf.pool.name.toLowerCase().includes(currentPool.toLowerCase()) ||
+                    currentPool.toLowerCase().includes(pf.pool.name.toLowerCase())) {
+                    currentRank = i + 1;
+                }
+            });
+        }
+
+        // Build the card for this algorithm
+        html += '<div class="pool-card">';
+
+        // Header row
+        html += '<div class="pool-card-header">';
+        html += '<div class="pool-card-algo">' + esc(algo) + '</div>';
+        html += '<div class="pool-card-rev">' + formatCurrency(dailyRev) + '/day revenue</div>';
+        html += '</div>';
+
+        // Recommendation
+        html += '<div class="pool-card-recommend">';
+        html += '<div class="pool-card-recommend-label">Recommended Pool</div>';
+        html += '<div class="pool-card-recommend-name">' + esc(best.pool.name) + '</div>';
+        html += '<div class="pool-card-recommend-meta">' + esc(best.pool.fee) + ' fee &middot; ' + esc(best.pool.payout) + ' payout</div>';
+        if (best.pool.note) {
+            html += '<div class="pool-card-recommend-note">' + esc(best.pool.note) + '</div>';
+        }
+        html += '</div>';
+
+        // Your ranking (if detected)
+        if (currentRank > 0) {
+            var rankColor = currentRank === 1 ? 'var(--success)' : currentRank <= 2 ? 'var(--warning)' : 'var(--danger)';
+            html += '<div class="pool-card-rank">';
+            html += '<span class="pool-card-rank-label">Your pool is ranked</span>';
+            html += '<span class="pool-card-rank-value" style="color:' + rankColor + '">' + currentRank + ' of ' + totalPools + '</span>';
+            if (currentRank > 1) {
+                var yourFee = poolsWithFees[currentRank - 1];
+                var savingsVsYou = yourFee.annualFee - best.annualFee;
+                html += '<span class="pool-card-rank-tip">Switch to ' + esc(best.pool.name) + ' to save <strong>' + formatCurrency(savingsVsYou) + '/yr</strong></span>';
+            }
+            html += '</div>';
+        }
+
+        // Pool ranking list (compact)
+        html += '<div class="pool-card-rankings">';
+        poolsWithFees.forEach((pf, i) => {
+            var rank = i + 1;
+            var isCurrentPool = (currentRank === rank);
+            var isBest = (rank === 1);
+            html += '<div class="pool-rank-row' + (isBest ? ' pool-rank-best' : '') + (isCurrentPool ? ' pool-rank-current' : '') + '">';
+            html += '<span class="pool-rank-num">#' + rank + '</span>';
+            html += '<span class="pool-rank-name">' + esc(pf.pool.name) + '</span>';
+            if (isBest) html += '<span class="pool-rank-badge pool-rank-badge-best">BEST</span>';
+            if (isCurrentPool) html += '<span class="pool-rank-badge pool-rank-badge-you">YOU</span>';
+            html += '<span class="pool-rank-fee">' + esc(pf.pool.fee) + '</span>';
+            html += '<span class="pool-rank-loss">' + (pf.annualFee > 0 ? '-' + formatCurrency(pf.annualFee) + '/yr' : '$0/yr') + '</span>';
+            html += '</div>';
         });
+        html += '</div>';
 
-        html += '<div class="pool-algo-section">';
-        html += '<h4>' + algo + ' <span style="color:var(--text-muted);font-weight:400;font-size:0.85rem;">(' + formatCurrency(dailyRev) + '/day revenue)</span></h4>';
+        // Savings summary
+        if (maxSavings > 0) {
+            html += '<div class="pool-card-savings">Choosing the best vs worst pool saves <strong class="profit-positive">' + formatCurrency(maxSavings) + '/year</strong></div>';
+        }
+
+        // Collapsible details
+        html += '<button class="pool-details-toggle" onclick="togglePoolDetails(\'' + algo + '\')">Show full details</button>';
+        html += '<div class="pool-details-table" id="poolDetails_' + algo.replace(/[^a-zA-Z0-9]/g, '') + '" style="display:none;">';
         html += '<table class="coin-table"><thead><tr>' +
-            '<th>Pool</th><th>Fee</th><th>Payout</th><th>Min Payout</th><th>Est. Daily Fee Loss</th><th>Est. Annual Fee Loss</th><th>Notes</th>' +
+            '<th>Pool</th><th>Fee</th><th>Payout</th><th>Min Payout</th><th>Daily Fee</th><th>Annual Fee</th><th>Notes</th>' +
             '</tr></thead><tbody>';
-
         poolsWithFees.forEach((pf, i) => {
             var p = pf.pool;
-            var isBest = i === 0;
-            html += '<tr' + (isBest ? ' style="background:rgba(34,197,94,0.08);"' : '') + '>' +
-                '<td><strong>' + esc(p.name) + '</strong>' + (isBest ? ' <span style="color:var(--success);font-size:0.75rem;">BEST</span>' : '') + '</td>' +
+            html += '<tr' + (i === 0 ? ' style="background:rgba(34,197,94,0.08);"' : '') + '>' +
+                '<td><strong>' + esc(p.name) + '</strong></td>' +
                 '<td>' + esc(p.fee) + '</td>' +
                 '<td>' + esc(p.payout) + '</td>' +
                 '<td>' + esc(p.minPayout) + '</td>' +
@@ -304,21 +373,24 @@ function renderPoolComparison() {
                 '</tr>';
         });
         html += '</tbody></table></div>';
+
+        html += '</div>'; // close pool-card
     });
 
-    // Build recommendation banner at the top
-    var bannerHtml = '<div class="pool-recommendations">';
-    recommendations.forEach(rec => {
-        bannerHtml += '<div class="pool-rec-card">' +
-            '<div class="pool-rec-algo">' + esc(rec.algo) + '</div>' +
-            '<div class="pool-rec-name">' + esc(rec.bestPool) + '</div>' +
-            '<div class="pool-rec-detail">Fee: ' + esc(rec.bestFee) + '</div>' +
-            (rec.annualSaved > 0 ? '<div class="pool-rec-savings">Save up to <strong class="profit-positive">' + formatCurrency(rec.annualSaved) + '/yr</strong> vs worst pool</div>' : '<div class="pool-rec-savings">Already lowest fee</div>') +
-            '</div>';
-    });
-    bannerHtml += '</div>';
+    container.innerHTML = html || '<p style="color:var(--text-muted)">No pool data for your algorithms.</p>';
+}
 
-    container.innerHTML = (bannerHtml + html) || '<p style="color:var(--text-muted)">No pool data for your algorithms.</p>';
+function togglePoolDetails(algo) {
+    var id = 'poolDetails_' + algo.replace(/[^a-zA-Z0-9]/g, '');
+    var el = document.getElementById(id);
+    var btn = el.previousElementSibling;
+    if (el.style.display === 'none') {
+        el.style.display = 'block';
+        btn.textContent = 'Hide full details';
+    } else {
+        el.style.display = 'none';
+        btn.textContent = 'Show full details';
+    }
 }
 
 // ---- Power Capacity Optimizer ----

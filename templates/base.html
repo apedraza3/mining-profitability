@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Mining Profitability Dashboard{% endblock %}</title>
-    <link rel="stylesheet" href="/static/css/dashboard.css?v=9">
+    <link rel="stylesheet" href="/static/css/dashboard.css?v=11">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -16,6 +16,7 @@
         <a href="/optimizer" class="tool-nav-link {% if active_page == 'optimizer' %}active{% endif %}">Power Optimizer</a>
         <a href="/difficulty" class="tool-nav-link {% if active_page == 'difficulty' %}active{% endif %}">Difficulty Trends</a>
         <a href="/wallet" class="tool-nav-link {% if active_page == 'wallet' %}active{% endif %}">Wallet</a>
+        <a href="/solar" class="tool-nav-link {% if active_page == 'solar' %}active{% endif %}">Solar Loan</a>
         {% if session.get('authenticated') %}
         <a href="/logout" class="tool-nav-link" style="margin-left:auto;">Logout</a>
         {% endif %}

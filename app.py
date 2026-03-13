@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import threading
@@ -162,6 +163,12 @@ def wallet_page():
     return render_template("wallet.html", active_page="wallet")
 
 
+@app.route("/solar")
+@login_required
+def solar_page():
+    return render_template("solar.html", active_page="solar")
+
+
 # ---- Miners API ----
 
 @app.route("/api/miners", methods=["GET"])
@@ -262,6 +269,32 @@ def get_profitability():
         return jsonify(data)
     except Exception as e:
         logger.error("Profitability calculation failed: %s", e)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/pool-summary", methods=["GET"])
+@login_required
+def pool_summary():
+    """Lightweight endpoint for the pool comparison page — returns only
+    miner algorithm, revenue, quantity, pool, and status."""
+    try:
+        data = engine.calculate_all()
+        miners = []
+        for r in data.get("miners", []):
+            m = r.get("miner", {})
+            miners.append({
+                "miner": {
+                    "algorithm": m.get("algorithm", ""),
+                    "pool": m.get("pool", ""),
+                    "quantity": m.get("quantity", 1),
+                    "name": m.get("name", ""),
+                },
+                "daily_revenue": r.get("daily_revenue", 0),
+                "status": r.get("status", ""),
+            })
+        return jsonify({"miners": miners})
+    except Exception as e:
+        logger.error("Pool summary failed: %s", e)
         return jsonify({"error": str(e)}), 500
 
 
@@ -765,6 +798,187 @@ def solar_mining_summary():
     except Exception as e:
         logger.debug("Electricity dashboard not available: %s", e)
         return jsonify({"connected": False})
+
+
+# ---- Solar Loan API ----
+
+SOLAR_LOAN_FILE = os.path.join(config.DATA_DIR, "solar_loan.json")
+
+
+def _load_solar_loan():
+    try:
+        with open(SOLAR_LOAN_FILE, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"loan": {}, "system": {}}
+
+
+def _save_solar_loan(data):
+    with open(SOLAR_LOAN_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+@app.route("/api/solar-loan", methods=["GET"])
+@login_required
+def get_solar_loan():
+    return jsonify(_load_solar_loan())
+
+
+@app.route("/api/solar-loan", methods=["PUT"])
+@login_required
+def update_solar_loan():
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    _save_solar_loan(data)
+    return jsonify(data)
+
+
+@app.route("/api/solar-loan/analysis", methods=["GET"])
+@login_required
+def solar_loan_analysis():
+    """Full solar loan vs savings analysis pulling live data from electricity dashboard."""
+    import requests as req
+    from datetime import datetime
+
+    loan_data = _load_solar_loan()
+    loan = loan_data.get("loan", {})
+    system = loan_data.get("system", {})
+
+    monthly_payment = loan.get("monthly_payment", 0)
+
+    # Fetch live solar data from electricity dashboard
+    elec_connected = False
+    solar_savings_daily = 0
+    solar_production_kwh_today = 0
+    energy_rate = 0.08907
+    solar_roi = {}
+    daily_summary = {}
+
+    try:
+        rt = req.get(f"{ELECTRICITY_API}/api/realtime", timeout=5).json()
+        summary = req.get(f"{ELECTRICITY_API}/api/summary", timeout=5).json()
+        roi_resp = req.get(f"{ELECTRICITY_API}/api/solar/roi", timeout=5).json()
+        costs_resp = req.get(f"{ELECTRICITY_API}/api/costs?period=month", timeout=5).json()
+        elec_connected = True
+
+        energy_rate = summary.get("energy_rate", 0.08907)
+        solar_roi = roi_resp
+        solar_savings_daily = summary.get("solar_savings", 0) or 0
+        solar_production_kwh_today = summary.get("solar_kwh", 0) or 0
+
+        # Monthly savings from costs endpoint
+        monthly_solar_savings = costs_resp.get("total_solar_savings", 0) or 0
+
+        # If no monthly data yet, estimate from daily
+        if monthly_solar_savings <= 0 and solar_savings_daily > 0:
+            monthly_solar_savings = solar_savings_daily * 30
+
+        daily_summary = {
+            "solar_w": rt.get("solar_production_w", 0),
+            "consumption_w": rt.get("house_consumption_w", 0),
+            "crypto_w": rt.get("crypto_mining_w", 0),
+            "net_grid_w": rt.get("net_grid_w", 0),
+        }
+    except Exception as e:
+        logger.debug("Solar loan: electricity dashboard unavailable: %s", e)
+        monthly_solar_savings = 0
+
+    # Also pull demand charge savings estimate from profitability engine
+    demand_savings_monthly = 0
+    try:
+        prof_data = engine.calculate_all()
+        summary_data = prof_data.get("summary", {})
+        demand_rate = summary_data.get("demand_rate", 0)
+        # Estimate solar's demand reduction: if solar covers X% of consumption,
+        # it reduces peak demand by roughly that percentage
+        if demand_rate > 0 and daily_summary.get("consumption_w", 0) > 0:
+            solar_w = daily_summary.get("solar_w", 0)
+            cons_w = daily_summary.get("consumption_w", 0)
+            solar_pct = min(solar_w / cons_w, 1.0) if cons_w > 0 else 0
+            # Peak demand without solar ~ consumption / 1000 kW
+            # Demand reduction from solar (rough estimate)
+            peak_kw = cons_w / 1000
+            demand_reduction_kw = peak_kw * solar_pct
+            demand_savings_monthly = round(demand_reduction_kw * demand_rate, 2)
+    except Exception as e:
+        logger.debug("Solar loan: profitability engine error: %s", e)
+
+    total_monthly_savings = monthly_solar_savings + demand_savings_monthly
+    net_monthly = total_monthly_savings - monthly_payment
+    annual_savings = total_monthly_savings * 12
+    annual_cost = monthly_payment * 12
+
+    # Remaining loan months estimate
+    remaining_months = 0
+    if monthly_payment > 0 and loan.get("outstanding_principal", 0) > 0:
+        remaining_months = int(loan["outstanding_principal"] / monthly_payment)
+
+    # Post-loan monthly benefit (after loan is paid off)
+    post_loan_monthly = total_monthly_savings
+
+    # Lifetime value: savings after loan payoff * estimated panel life remaining
+    panel_life_years = 25
+    install_date = system.get("install_date", "")
+    years_active = 0
+    if install_date:
+        try:
+            start = datetime.strptime(install_date, "%Y-%m-%d")
+            years_active = (datetime.now() - start).days / 365.25
+        except ValueError:
+            pass
+    remaining_life_years = max(panel_life_years - years_active, 0)
+    remaining_loan_years = remaining_months / 12
+
+    # Total value over remaining panel life
+    if remaining_loan_years > 0:
+        value_during_loan = net_monthly * 12 * min(remaining_loan_years, remaining_life_years)
+        value_after_loan = post_loan_monthly * 12 * max(remaining_life_years - remaining_loan_years, 0)
+        lifetime_value = value_during_loan + value_after_loan
+    else:
+        lifetime_value = post_loan_monthly * 12 * remaining_life_years
+
+    return jsonify({
+        "electricity_connected": elec_connected,
+        "loan": loan,
+        "system": system,
+        "energy_rate": energy_rate,
+        "realtime": daily_summary,
+        "monthly": {
+            "payment": monthly_payment,
+            "energy_savings": round(monthly_solar_savings, 2),
+            "demand_savings": demand_savings_monthly,
+            "total_savings": round(total_monthly_savings, 2),
+            "net": round(net_monthly, 2),
+            "is_profitable": net_monthly >= 0,
+        },
+        "annual": {
+            "cost": round(annual_cost, 2),
+            "savings": round(annual_savings, 2),
+            "net": round(annual_savings - annual_cost, 2),
+        },
+        "loan_progress": {
+            "remaining_months": remaining_months,
+            "remaining_years": round(remaining_months / 12, 1) if remaining_months > 0 else 0,
+            "outstanding": loan.get("outstanding_principal", 0),
+        },
+        "post_loan": {
+            "monthly_benefit": round(post_loan_monthly, 2),
+            "annual_benefit": round(post_loan_monthly * 12, 2),
+        },
+        "lifetime": {
+            "panel_life_years": panel_life_years,
+            "years_active": round(years_active, 1),
+            "remaining_life_years": round(remaining_life_years, 1),
+            "total_value": round(lifetime_value, 2),
+        },
+        "solar_roi": {
+            "payback_pct": solar_roi.get("payback_pct", 0),
+            "total_savings_to_date": solar_roi.get("total_savings", 0),
+            "avg_monthly_savings": solar_roi.get("avg_monthly_savings", 0),
+            "avg_monthly_kwh": solar_roi.get("avg_monthly_kwh", 0),
+        },
+    })
 
 
 if __name__ == "__main__":
