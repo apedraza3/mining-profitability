@@ -334,13 +334,14 @@ class ProfitabilityEngine:
         }
 
     def _fetch_electricity_data(self) -> dict | None:
-        """Fetch live solar + settings from electricity dashboard."""
+        """Fetch live solar + settings + bill estimate from electricity dashboard."""
         import os
         try:
             import requests
             api = os.getenv("ELECTRICITY_API_URL", "http://127.0.0.1:5001")
             realtime = None
             settings = None
+            bill_estimate = None
             resp = requests.get(f"{api}/api/realtime", timeout=3)
             if resp.ok:
                 data = resp.json()
@@ -349,7 +350,10 @@ class ProfitabilityEngine:
             resp2 = requests.get(f"{api}/api/settings", timeout=3)
             if resp2.ok:
                 settings = resp2.json()
-            return {"realtime": realtime, "settings": settings}
+            resp3 = requests.get(f"{api}/api/bill-estimate", timeout=3)
+            if resp3.ok:
+                bill_estimate = resp3.json()
+            return {"realtime": realtime, "settings": settings, "bill_estimate": bill_estimate}
         except Exception as e:
             logger.debug("Electricity dashboard fetch failed: %s", e)
         return None
@@ -357,13 +361,16 @@ class ProfitabilityEngine:
     def _inject_live_solar(self, locations: dict) -> dict:
         """Inject live solar production and demand rate into home location.
 
-        Returns electricity settings dict (demand_rate, etc.) or empty dict.
+        Returns electricity settings dict (demand_rate, bill_estimate, etc.) or empty dict.
         """
         elec_data = self._fetch_electricity_data()
         if not elec_data:
             return {}
 
         settings = elec_data.get("settings") or {}
+        bill_estimate = elec_data.get("bill_estimate")
+        if bill_estimate:
+            settings["_bill_estimate"] = bill_estimate
         solar_data = elec_data.get("realtime")
         if not solar_data:
             return settings
@@ -652,10 +659,18 @@ class ProfitabilityEngine:
                 r.get("best_daily_profit", 0) * r["miner"].get("quantity", 1)
             )
 
-        # Calculate demand charges for home miners
+        # Calculate demand charges using actual measured peak from electricity dashboard
         demand_rate = elec_settings.get("demand_rate", 0)
+        bill_estimate = elec_settings.get("_bill_estimate") or {}
+        actual_peak_kw = bill_estimate.get("peak_demand_kw", 0)
         home_demand = {}
-        if demand_rate > 0:
+
+        if demand_rate > 0 and actual_peak_kw > 0:
+            # Use real measured peak from PVS6 consumption meter
+            total_home_kw = actual_peak_kw
+            total_home_demand_charge = round(total_home_kw * demand_rate, 2)
+        elif demand_rate > 0:
+            # Fallback: sum miner rated wattages if electricity dashboard unavailable
             for r in active:
                 if r["location"].get("name", "").lower() == "home":
                     w = r["power"]["effective_watts"] * r["miner"].get("quantity", 1)
