@@ -660,14 +660,17 @@ class ProfitabilityEngine:
             )
 
         # Calculate demand charges using actual measured peak from electricity dashboard
+        # We track the highest observed peak per billing month (high water mark)
         demand_rate = elec_settings.get("demand_rate", 0)
         bill_estimate = elec_settings.get("_bill_estimate") or {}
         actual_peak_kw = bill_estimate.get("peak_demand_kw", 0)
         home_demand = {}
 
         if demand_rate > 0 and actual_peak_kw > 0:
-            # Use real measured peak from PVS6 consumption meter
-            total_home_kw = actual_peak_kw
+            # Store highest peak — only goes up, never down within a billing month
+            from services.history_service import HistoryService
+            peak_svc = HistoryService()
+            total_home_kw = peak_svc.update_peak_demand(actual_peak_kw)
             total_home_demand_charge = round(total_home_kw * demand_rate, 2)
         elif demand_rate > 0:
             # Fallback: sum miner rated wattages if electricity dashboard unavailable

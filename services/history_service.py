@@ -46,6 +46,13 @@ class HistoryService:
                 hashrate_units TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS peak_demand (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                billing_month TEXT NOT NULL UNIQUE,
+                peak_kw REAL NOT NULL,
+                recorded_at TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_profit_miner_time
                 ON profit_snapshots(miner_id, timestamp);
             CREATE INDEX IF NOT EXISTS idx_uptime_miner_time
@@ -240,6 +247,59 @@ class HistoryService:
             }
             for row in rows
         }
+
+    def update_peak_demand(self, current_kw):
+        """Store the highest observed peak demand for the current billing month.
+        Only updates if the new reading is higher than what's stored."""
+        if not current_kw or current_kw <= 0:
+            return None
+        conn = self._get_conn()
+        billing_month = datetime.now().strftime("%Y-%m")
+        now = datetime.now().isoformat()
+
+        row = conn.execute(
+            "SELECT peak_kw FROM peak_demand WHERE billing_month = ?",
+            (billing_month,),
+        ).fetchone()
+
+        if row is None:
+            # First reading this month
+            conn.execute(
+                "INSERT INTO peak_demand (billing_month, peak_kw, recorded_at) VALUES (?, ?, ?)",
+                (billing_month, round(current_kw, 2), now),
+            )
+            conn.commit()
+            peak = current_kw
+            logger.info("Peak demand for %s initialized at %.2f kW", billing_month, current_kw)
+        elif current_kw > row["peak_kw"]:
+            # New high — update
+            conn.execute(
+                "UPDATE peak_demand SET peak_kw = ?, recorded_at = ? WHERE billing_month = ?",
+                (round(current_kw, 2), now, billing_month),
+            )
+            conn.commit()
+            peak = current_kw
+            logger.info("Peak demand for %s updated: %.2f → %.2f kW", billing_month, row["peak_kw"], current_kw)
+        else:
+            # Current reading is lower — keep the stored high
+            peak = row["peak_kw"]
+
+        conn.close()
+        return round(peak, 2)
+
+    def get_peak_demand(self, billing_month=None):
+        """Get the stored peak demand for a billing month (defaults to current)."""
+        if not billing_month:
+            billing_month = datetime.now().strftime("%Y-%m")
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT peak_kw, recorded_at FROM peak_demand WHERE billing_month = ?",
+            (billing_month,),
+        ).fetchone()
+        conn.close()
+        if row:
+            return {"peak_kw": row["peak_kw"], "recorded_at": row["recorded_at"]}
+        return None
 
     def cleanup_old_data(self):
         """Remove old data — uptime: 90 days, profit: 365 days."""
