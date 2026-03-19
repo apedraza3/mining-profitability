@@ -334,7 +334,7 @@ class ProfitabilityEngine:
         }
 
     def _fetch_electricity_data(self) -> dict | None:
-        """Fetch live solar + settings + bill estimate from electricity dashboard."""
+        """Fetch live solar + settings + bill estimate + daily summary from electricity dashboard."""
         import os
         try:
             import requests
@@ -342,6 +342,7 @@ class ProfitabilityEngine:
             realtime = None
             settings = None
             bill_estimate = None
+            daily_summary = None
             resp = requests.get(f"{api}/api/realtime", timeout=3)
             if resp.ok:
                 data = resp.json()
@@ -353,7 +354,13 @@ class ProfitabilityEngine:
             resp3 = requests.get(f"{api}/api/bill-estimate", timeout=3)
             if resp3.ok:
                 bill_estimate = resp3.json()
-            return {"realtime": realtime, "settings": settings, "bill_estimate": bill_estimate}
+            resp4 = requests.get(f"{api}/api/summary", timeout=3)
+            if resp4.ok:
+                daily_summary = resp4.json()
+            return {
+                "realtime": realtime, "settings": settings,
+                "bill_estimate": bill_estimate, "daily_summary": daily_summary,
+            }
         except Exception as e:
             logger.debug("Electricity dashboard fetch failed: %s", e)
         return None
@@ -372,12 +379,7 @@ class ProfitabilityEngine:
         if bill_estimate:
             settings["_bill_estimate"] = bill_estimate
         solar_data = elec_data.get("realtime")
-        if not solar_data:
-            return settings
-
-        solar_w = solar_data.get("solar_production_w", 0)
-        consumption_w = solar_data.get("house_consumption_w", 0)
-        crypto_w = solar_data.get("crypto_mining_w", 0)
+        daily_summary = elec_data.get("daily_summary")
 
         # Find the home location and inject solar + demand data
         for loc_id, loc in locations.items():
@@ -385,15 +387,39 @@ class ProfitabilityEngine:
                 # Inject demand rate for cost calculations
                 loc["_demand_rate"] = settings.get("demand_rate", 15.38)
 
-                if solar_w > 0:
-                    # Estimate daily solar kWh: current production * typical sun hours
-                    # Use crypto's proportional share of solar, not all of it
+                # Use actual daily accumulated kWh from electricity dashboard
+                # (much more accurate than instantaneous watts × peak sun hours)
+                actual_solar_kwh = (daily_summary or {}).get("solar_kwh", 0)
+                actual_consumption_kwh = (daily_summary or {}).get("consumption_kwh", 0)
+                actual_crypto_kwh = (daily_summary or {}).get("crypto_kwh", 0)
+
+                # Also grab realtime for live display values
+                solar_w = (solar_data or {}).get("solar_production_w", 0)
+                consumption_w = (solar_data or {}).get("house_consumption_w", 0)
+                crypto_w = (solar_data or {}).get("crypto_mining_w", 0)
+
+                if actual_solar_kwh > 0 and actual_consumption_kwh > 0:
+                    # Use actual accumulated data — crypto's share of solar
+                    crypto_share = min(actual_crypto_kwh / actual_consumption_kwh, 1.0)
+                    crypto_solar_kwh = min(actual_solar_kwh, actual_consumption_kwh) * crypto_share
+                    loc["solar_daily_kwh"] = crypto_solar_kwh
+                    loc["_live_solar"] = {
+                        "solar_w": solar_w,
+                        "consumption_w": consumption_w,
+                        "crypto_w": crypto_w,
+                        "crypto_solar_w": crypto_w,  # realtime for display
+                    }
+                    logger.debug(
+                        "Injected actual daily solar: %.2f kWh solar, %.2f kWh crypto → %.2f kWh crypto-solar/day",
+                        actual_solar_kwh, actual_crypto_kwh, crypto_solar_kwh,
+                    )
+                elif solar_w > 0:
+                    # Fallback: no daily data yet, use instantaneous estimate
                     if consumption_w > 0:
                         crypto_share = min(crypto_w / consumption_w, 1.0)
                         crypto_solar_w = min(solar_w, consumption_w) * crypto_share
                     else:
                         crypto_solar_w = 0
-                    # Convert current watts to estimated daily kWh (use 5 peak sun hours)
                     solar_daily_kwh = crypto_solar_w * 5 / 1000
                     loc["solar_daily_kwh"] = solar_daily_kwh
                     loc["_live_solar"] = {
@@ -403,7 +429,7 @@ class ProfitabilityEngine:
                         "crypto_solar_w": crypto_solar_w,
                     }
                     logger.debug(
-                        "Injected live solar: %.0fW solar, %.0fW crypto share → %.1f kWh/day",
+                        "Injected estimated solar: %.0fW solar, %.0fW crypto share → %.1f kWh/day",
                         solar_w, crypto_solar_w, solar_daily_kwh,
                     )
                 break

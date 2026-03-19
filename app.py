@@ -754,22 +754,42 @@ def solar_mining_summary():
         summary = req.get(f"{ELECTRICITY_API}/api/summary", timeout=5).json()
         roi = req.get(f"{ELECTRICITY_API}/api/solar/roi", timeout=5).json()
 
+        # Realtime values (for live display)
         solar_w = rt.get("solar_production_w", 0)
         crypto_w = rt.get("crypto_mining_w", 0)
         consumption_w = rt.get("house_consumption_w", 0)
         net_grid_w = rt.get("net_grid_w", 0)
 
-        # Solar covers the whole house proportionally; crypto's share:
-        solar_offset_w = min(solar_w, consumption_w) if consumption_w > 0 else 0
-        crypto_share = crypto_w / consumption_w if consumption_w > 0 else 0
-        crypto_solar_offset_w = solar_offset_w * crypto_share
-
         energy_rate = summary.get("energy_rate", 0.08907)
 
-        # Daily projections from current reading
-        crypto_daily_cost = (crypto_w / 1000) * 24 * energy_rate
-        crypto_solar_savings_daily = (crypto_solar_offset_w / 1000) * 24 * energy_rate
+        # Use actual daily accumulated kWh from electricity dashboard
+        # (much more accurate than instantaneous watts × 24)
+        actual_solar_kwh = summary.get("solar_kwh", 0)
+        actual_consumption_kwh = summary.get("consumption_kwh", 0)
+        actual_crypto_kwh = summary.get("crypto_kwh", 0)
+
+        if actual_consumption_kwh > 0 and actual_solar_kwh > 0:
+            # Crypto's proportional share of today's actual solar production
+            crypto_share = min(actual_crypto_kwh / actual_consumption_kwh, 1.0)
+            crypto_solar_kwh = min(actual_solar_kwh, actual_consumption_kwh) * crypto_share
+            crypto_daily_cost = actual_crypto_kwh * energy_rate
+            crypto_solar_savings_daily = crypto_solar_kwh * energy_rate
+        else:
+            # Fallback to instantaneous estimate if no daily data yet
+            solar_offset_w = min(solar_w, consumption_w) if consumption_w > 0 else 0
+            crypto_share_rt = crypto_w / consumption_w if consumption_w > 0 else 0
+            crypto_solar_offset_w = solar_offset_w * crypto_share_rt
+            crypto_daily_cost = (crypto_w / 1000) * 24 * energy_rate
+            crypto_solar_savings_daily = (crypto_solar_offset_w / 1000) * 24 * energy_rate
+
         net_crypto_daily_cost = crypto_daily_cost - crypto_solar_savings_daily
+
+        # Realtime solar offset for display
+        solar_offset_pct = (solar_w / consumption_w * 100) if consumption_w > 0 else 0
+        crypto_solar_offset_w = (
+            min(solar_w, consumption_w) * (crypto_w / consumption_w)
+            if consumption_w > 0 else 0
+        )
 
         return jsonify({
             "connected": True,
@@ -778,7 +798,7 @@ def solar_mining_summary():
                 "crypto_w": round(crypto_w, 0),
                 "consumption_w": round(consumption_w, 0),
                 "net_grid_w": round(net_grid_w, 0),
-                "solar_offset_pct": round((solar_w / consumption_w * 100) if consumption_w > 0 else 0, 1),
+                "solar_offset_pct": round(solar_offset_pct, 1),
                 "crypto_solar_offset_w": round(crypto_solar_offset_w, 0),
             },
             "daily": {
