@@ -357,9 +357,14 @@ class ProfitabilityEngine:
             resp4 = requests.get(f"{api}/api/summary", timeout=3)
             if resp4.ok:
                 daily_summary = resp4.json()
+            monthly_costs = None
+            resp5 = requests.get(f"{api}/api/costs?period=month", timeout=3)
+            if resp5.ok:
+                monthly_costs = resp5.json()
             return {
                 "realtime": realtime, "settings": settings,
                 "bill_estimate": bill_estimate, "daily_summary": daily_summary,
+                "monthly_costs": monthly_costs,
             }
         except Exception as e:
             logger.debug("Electricity dashboard fetch failed: %s", e)
@@ -378,6 +383,9 @@ class ProfitabilityEngine:
         bill_estimate = elec_data.get("bill_estimate")
         if bill_estimate:
             settings["_bill_estimate"] = bill_estimate
+        monthly_costs = elec_data.get("monthly_costs")
+        if monthly_costs:
+            settings["_monthly_solar_savings"] = monthly_costs.get("total_solar_savings", 0)
         solar_data = elec_data.get("realtime")
         daily_summary = elec_data.get("daily_summary")
 
@@ -753,6 +761,7 @@ class ProfitabilityEngine:
                     else -1
                 ),
                 "total_solar_savings": round(total_solar_savings, 2),
+                "solar_savings_30d": round(elec_settings.get("_monthly_solar_savings", 0) or 0, 2),
                 "total_solar_electricity": round(total_solar_elec, 2),
                 "total_solar_profit": round(total_solar_profit, 2),
                 "demand_rate": demand_rate,

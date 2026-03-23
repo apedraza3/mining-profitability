@@ -167,13 +167,14 @@ function renderSummary(summary) {
         }
     }
 
-    // Solar savings display
+    // Solar savings display (actual last 30 days from electricity dashboard)
     var solarEl = document.getElementById('solarSavingsCard');
     if (solarEl) {
-        if (hasSolar) {
+        var savings30d = summary.solar_savings_30d || 0;
+        if (hasSolar || savings30d > 0) {
             solarEl.style.display = '';
-            document.getElementById('solarDailySavings').textContent = formatCurrency(summary.total_solar_savings);
-            document.getElementById('solarMonthlySavings').textContent = formatCurrency(summary.total_solar_savings * 30) + '/mo';
+            document.getElementById('solarDailySavings').textContent = formatCurrency(savings30d);
+            document.getElementById('solarMonthlySavings').textContent = 'last 30 days';
         } else {
             solarEl.style.display = 'none';
         }
