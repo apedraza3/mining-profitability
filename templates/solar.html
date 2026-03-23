@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+{% block title %}Solar Loan Analysis - Mining Dashboard{% endblock %}
+
+{% block content %}
+<div class="tool-page">
+    <div class="tool-page-header">
+        <h2>Solar Loan Analysis</h2>
+        <p style="color:var(--text-muted);font-size:0.85rem;margin-top:4px;">
+            Track your solar loan against actual energy savings to see if solar is paying for itself.
+        </p>
+    </div>
+
+    <!-- Connection Status -->
+    <div id="connectionStatus" style="margin-bottom:16px;"></div>
+
+    <!-- Verdict Banner -->
+    <div class="solar-verdict-banner" id="verdictBanner" style="display:none;">
+        <div class="verdict-icon" id="verdictIcon"></div>
+        <div class="verdict-text">
+            <div class="verdict-title" id="verdictTitle">--</div>
+            <div class="verdict-detail" id="verdictDetail">--</div>
+        </div>
+    </div>
+
+    <!-- Monthly Breakdown Cards -->
+    <div class="solar-monthly-grid" id="monthlyGrid">
+        <div class="solar-card solar-card-cost">
+            <div class="solar-card-label">Loan Payment</div>
+            <div class="solar-card-value profit-negative" id="loanPayment">$0.00</div>
+            <div class="solar-card-sub" id="loanPaymentSub">per month</div>
+        </div>
+        <div class="solar-card solar-card-savings">
+            <div class="solar-card-label">Energy Savings</div>
+            <div class="solar-card-value profit-positive" id="energySavings">$0.00</div>
+            <div class="solar-card-sub" id="energySavingsSub">per month</div>
+        </div>
+        <div class="solar-card solar-card-demand">
+            <div class="solar-card-label">Demand Savings</div>
+            <div class="solar-card-value profit-positive" id="demandSavings">$0.00</div>
+            <div class="solar-card-sub">estimated demand reduction</div>
+        </div>
+        <div class="solar-card">
+            <div class="solar-card-label">Net Monthly</div>
+            <div class="solar-card-value" id="netMonthly">$0.00</div>
+            <div class="solar-card-sub" id="netMonthlySub">--</div>
+        </div>
+    </div>
+
+    <!-- Annual View -->
+    <div class="solar-section">
+        <div class="section-header" onclick="toggleSection('annual')">
+            <h3>Annual Overview</h3>
+            <span class="toggle-icon" id="annualToggle">&#9660;</span>
+        </div>
+        <div id="annualContent">
+            <div class="solar-annual-grid">
+                <div class="solar-annual-item">
+                    <span class="solar-annual-label">Annual Loan Cost</span>
+                    <span class="solar-annual-value profit-negative" id="annualCost">$0</span>
+                </div>
+                <div class="solar-annual-item">
+                    <span class="solar-annual-label">Annual Savings</span>
+                    <span class="solar-annual-value profit-positive" id="annualSavings">$0</span>
+                </div>
+                <div class="solar-annual-item">
+                    <span class="solar-annual-label">Annual Net</span>
+                    <span class="solar-annual-value" id="annualNet">$0</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loan Progress -->
+    <div class="solar-section">
+        <div class="section-header" onclick="toggleSection('loanProgress')">
+            <h3>Loan Progress</h3>
+            <span class="toggle-icon" id="loanProgressToggle">&#9660;</span>
+        </div>
+        <div id="loanProgressContent">
+            <div class="solar-progress-bar-wrap">
+                <div class="solar-progress-bar">
+                    <div class="solar-progress-fill" id="loanProgressFill" style="width:0%;"></div>
+                </div>
+                <div class="solar-progress-labels">
+                    <span id="loanPaidLabel">$0 paid</span>
+                    <span id="loanRemainingLabel">$0 remaining</span>
+                </div>
+            </div>
+            <div class="solar-loan-stats">
+                <div class="solar-loan-stat">
+                    <span class="solar-loan-stat-label">Outstanding</span>
+                    <span class="solar-loan-stat-value" id="outstandingPrincipal">$0</span>
+                </div>
+                <div class="solar-loan-stat">
+                    <span class="solar-loan-stat-label">Remaining</span>
+                    <span class="solar-loan-stat-value" id="remainingTime">--</span>
+                </div>
+                <div class="solar-loan-stat">
+                    <span class="solar-loan-stat-label">Monthly Payment</span>
+                    <span class="solar-loan-stat-value" id="monthlyPaymentStat">$0</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Post-Loan Projections -->
+    <div class="solar-section">
+        <div class="section-header" onclick="toggleSection('postLoan')">
+            <h3>After Loan Payoff</h3>
+            <span class="toggle-icon" id="postLoanToggle">&#9660;</span>
+        </div>
+        <div id="postLoanContent">
+            <div class="solar-post-loan-grid">
+                <div class="solar-post-loan-card">
+                    <div class="solar-card-label">Monthly Benefit</div>
+                    <div class="solar-card-value profit-positive" id="postLoanMonthly">$0</div>
+                    <div class="solar-card-sub">pure savings, no loan payment</div>
+                </div>
+                <div class="solar-post-loan-card">
+                    <div class="solar-card-label">Annual Benefit</div>
+                    <div class="solar-card-value profit-positive" id="postLoanAnnual">$0</div>
+                    <div class="solar-card-sub">projected yearly savings</div>
+                </div>
+                <div class="solar-post-loan-card">
+                    <div class="solar-card-label">Remaining Panel Life</div>
+                    <div class="solar-card-value" id="remainingLife">--</div>
+                    <div class="solar-card-sub">of 25-year expected life</div>
+                </div>
+                <div class="solar-post-loan-card">
+                    <div class="solar-card-label">Lifetime Value</div>
+                    <div class="solar-card-value profit-positive" id="lifetimeValue">$0</div>
+                    <div class="solar-card-sub">total projected savings over panel life</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live Solar Data -->
+    <div class="solar-section">
+        <div class="section-header" onclick="toggleSection('liveData')">
+            <h3>Live Solar Data</h3>
+            <span class="toggle-icon" id="liveDataToggle">&#9660;</span>
+        </div>
+        <div id="liveDataContent">
+            <div class="solar-live-grid">
+                <div class="solar-live-item">
+                    <span class="solar-live-label">Solar Production</span>
+                    <span class="solar-live-value" id="liveSolarW">-- W</span>
+                </div>
+                <div class="solar-live-item">
+                    <span class="solar-live-label">House Consumption</span>
+                    <span class="solar-live-value" id="liveConsW">-- W</span>
+                </div>
+                <div class="solar-live-item">
+                    <span class="solar-live-label">Crypto Mining</span>
+                    <span class="solar-live-value" id="liveCryptoW">-- W</span>
+                </div>
+                <div class="solar-live-item">
+                    <span class="solar-live-label">Net Grid</span>
+                    <span class="solar-live-value" id="liveGridW">-- W</span>
+                </div>
+                <div class="solar-live-item">
+                    <span class="solar-live-label">Energy Rate</span>
+                    <span class="solar-live-value" id="liveEnergyRate">--</span>
+                </div>
+                <div class="solar-live-item">
+                    <span class="solar-live-label">Solar ROI Progress</span>
+                    <span class="solar-live-value" id="liveSolarRoi">--%</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings / Edit Loan Info -->
+    <div class="solar-section">
+        <div class="section-header" onclick="toggleSection('settings')">
+            <h3>Loan &amp; System Settings</h3>
+            <span class="toggle-icon collapsed" id="settingsToggle">&#9660;</span>
+        </div>
+        <div id="settingsContent" style="display:none;">
+            <form id="solarLoanForm" onsubmit="saveSolarLoan(event)">
+                <h4 style="font-size:0.9rem;margin-bottom:12px;color:var(--text-muted);">Loan Details</h4>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Monthly Payment ($)</label>
+                        <input type="number" id="fldMonthlyPayment" step="0.01" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Outstanding Principal ($)</label>
+                        <input type="number" id="fldOutstandingPrincipal" step="0.01" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Original Loan Amount ($)</label>
+                        <input type="number" id="fldOriginalLoan" step="0.01" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Interest Rate (%)</label>
+                        <input type="number" id="fldInterestRate" step="0.01" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Loan Term (months)</label>
+                        <input type="number" id="fldLoanTerm" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Lender</label>
+                        <input type="text" id="fldLender" placeholder="e.g. GoodLeap">
+                    </div>
+                    <div class="form-group">
+                        <label>Loan Start Date</label>
+                        <input type="date" id="fldLoanStartDate">
+                    </div>
+                </div>
+
+                <h4 style="font-size:0.9rem;margin:20px 0 12px;color:var(--text-muted);">System Details</h4>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>System Cost ($)</label>
+                        <input type="number" id="fldSystemCost" step="0.01" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label>System Size (kW)</label>
+                        <input type="number" id="fldSystemSize" step="0.01" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Panel Count</label>
+                        <input type="number" id="fldPanelCount" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Install Date</label>
+                        <input type="date" id="fldInstallDate">
+                    </div>
+                    <div class="form-group">
+                        <label>Federal ITC (%)</label>
+                        <input type="number" id="fldItcPct" step="1" min="0" max="100" value="30">
+                    </div>
+                    <div class="form-group">
+                        <label>Other Incentives ($)</label>
+                        <input type="number" id="fldIncentives" step="0.01" min="0">
+                    </div>
+                </div>
+
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-success">Save Settings</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/solar.js?v=1"></script>
+{% endblock %}

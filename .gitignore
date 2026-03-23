@@ -4,3 +4,9 @@ __pycache__/
 cache/
 .venv/
 venv/
+data/inventory.json
+data/locations.json
+data/power_imports.json
+data/solar_loan.json
+data/history.db
+data/*.db

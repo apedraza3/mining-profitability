@@ -1,0 +1,42 @@
+{
+  "miners": [
+    {
+      "name": "BTC-Miner-1",
+      "model": "Antminer S21",
+      "type": "ASIC",
+      "algorithm": "SHA-256",
+      "hashrate": 200,
+      "hashrate_unit": "TH/s",
+      "wattage": 3500,
+      "location_id": "location-1",
+      "quantity": 2,
+      "purchase_price": 5000,
+      "purchase_date": "2025-06-15",
+      "status": "active",
+      "hashrateno_model_key": "",
+      "miningnow_model_key": "",
+      "id": "example-miner-001",
+      "notes": "",
+      "whattomine_coin_id": null
+    },
+    {
+      "name": "LTC-Miner-1",
+      "model": "Antminer L9",
+      "type": "ASIC",
+      "algorithm": "Scrypt",
+      "hashrate": 16,
+      "hashrate_unit": "GH/s",
+      "wattage": 3260,
+      "location_id": "location-1",
+      "quantity": 1,
+      "purchase_price": 8000,
+      "purchase_date": "2025-09-01",
+      "status": "active",
+      "hashrateno_model_key": "",
+      "miningnow_model_key": "",
+      "id": "example-miner-002",
+      "notes": "",
+      "whattomine_coin_id": null
+    }
+  ]
+}
