@@ -27,7 +27,17 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
-app.secret_key = os.getenv("SECRET_KEY", os.urandom(32))
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB upload limit
+_env_secret = os.getenv("SECRET_KEY", "")
+if not _env_secret:
+    _secret_file = config.DATA_DIR / ".flask_secret"
+    if _secret_file.exists():
+        _env_secret = _secret_file.read_text().strip()
+    else:
+        _env_secret = os.urandom(32).hex()
+        _secret_file.write_text(_env_secret)
+        logger.info("Generated persistent SECRET_KEY at %s", _secret_file)
+app.secret_key = _env_secret
 
 # --- Auth setup ---
 _password_hash = None
@@ -183,7 +193,26 @@ def add_miner():
     data = request.get_json()
     if not data:
         return jsonify({"error": "No data provided"}), 400
+    # Validate required fields
+    errors = []
+    if not data.get("name", "").strip():
+        errors.append("name is required")
+    if not data.get("model", "").strip():
+        errors.append("model is required")
+    if not data.get("algorithm", "").strip():
+        errors.append("algorithm is required")
+    hashrate = data.get("hashrate")
+    if hashrate is None or (isinstance(hashrate, (int, float)) and hashrate <= 0):
+        errors.append("hashrate must be a positive number")
+    wattage = data.get("wattage")
+    if wattage is None or (isinstance(wattage, (int, float)) and wattage <= 0):
+        errors.append("wattage must be a positive number")
+    if data.get("purchase_price") is not None and float(data.get("purchase_price", 0)) < 0:
+        errors.append("purchase_price cannot be negative")
+    if errors:
+        return jsonify({"error": "Validation failed", "details": errors}), 400
     miner = inventory_mgr.add_miner(data)
+    engine.invalidate_cache()
     return jsonify(miner), 201
 
 
@@ -196,6 +225,7 @@ def update_miner(miner_id):
     miner = inventory_mgr.update_miner(miner_id, data)
     if miner is None:
         return jsonify({"error": "Miner not found"}), 404
+    engine.invalidate_cache()
     return jsonify(miner)
 
 
@@ -203,6 +233,7 @@ def update_miner(miner_id):
 @login_required
 def delete_miner(miner_id):
     if inventory_mgr.delete_miner(miner_id):
+        engine.invalidate_cache()
         return jsonify({"success": True})
     return jsonify({"error": "Miner not found"}), 404
 
@@ -230,6 +261,16 @@ def add_location():
     data = request.get_json()
     if not data:
         return jsonify({"error": "No data provided"}), 400
+    errors = []
+    if not data.get("name", "").strip():
+        errors.append("name is required")
+    elec_cost = data.get("electricity_cost_kwh")
+    if elec_cost is not None and float(elec_cost) < 0:
+        errors.append("electricity_cost_kwh cannot be negative")
+    if elec_cost is None:
+        errors.append("electricity_cost_kwh is required")
+    if errors:
+        return jsonify({"error": "Validation failed", "details": errors}), 400
     loc = inventory_mgr.add_location(data)
     return jsonify(loc), 201
 
@@ -359,8 +400,30 @@ def pool_workers():
     miners = inventory_mgr.get_all_miners()
     statuses = powerpool_svc.get_all_worker_statuses(miners)
     unmatched = powerpool_svc.get_unmatched_workers(miners)
+
+    # Stale share analysis per miner
+    stale_analysis = {}
+    for miner_id, status in statuses.items():
+        valid = status.get("valid_shares", 0) or 0
+        stale = status.get("stale_shares", 0) or 0
+        invalid = status.get("invalid_shares", 0) or 0
+        total = valid + stale + invalid
+        if total > 0:
+            stale_pct = round(stale / total * 100, 2)
+            invalid_pct = round(invalid / total * 100, 2)
+            efficiency = round(valid / total * 100, 2)
+            health = "good" if stale_pct < 1 else "warning" if stale_pct < 3 else "poor"
+            stale_analysis[miner_id] = {
+                "stale_pct": stale_pct,
+                "invalid_pct": invalid_pct,
+                "share_efficiency": efficiency,
+                "health": health,
+                "estimated_revenue_loss_pct": round(stale_pct + invalid_pct, 2),
+            }
+
     return jsonify({
         "statuses": statuses,
+        "stale_analysis": stale_analysis,
         "unmatched": [
             {
                 "worker_name": w["short_name"],
@@ -465,6 +528,7 @@ def refresh_all_caches():
     mn_cache.invalidate_all()
     pp_cache.invalidate_all()
     cb_cache.invalidate_all()
+    engine.invalidate_cache()
     return jsonify({"success": True, "message": "All caches cleared"})
 
 
@@ -685,11 +749,36 @@ def power_optimize():
 @app.route("/api/tools/difficulty", methods=["GET"])
 @login_required
 def difficulty_history():
-    """Fetch difficulty history from free APIs."""
+    """Fetch difficulty history and halving countdown from free APIs."""
     import requests as req
 
     algo = request.args.get("algo", "SHA-256")
     results = {}
+
+    # Halving schedule data
+    HALVING_DATA = {
+        "SHA-256": {
+            "coin": "BTC",
+            "block_interval_seconds": 600,
+            "halving_interval": 210000,
+            "current_reward": 3.125,
+            "post_halving_reward": 1.5625,
+        },
+        "Scrypt": {
+            "coin": "LTC",
+            "block_interval_seconds": 150,
+            "halving_interval": 840000,
+            "current_reward": 6.25,
+            "post_halving_reward": 3.125,
+        },
+        "Equihash": {
+            "coin": "ZEC",
+            "block_interval_seconds": 75,
+            "halving_interval": 1050000,
+            "current_reward": 1.5625,
+            "post_halving_reward": 0.78125,
+        },
+    }
 
     try:
         if algo == "SHA-256":
@@ -707,8 +796,34 @@ def difficulty_history():
                     {"timestamp": p["x"], "difficulty": p["y"]}
                     for p in data.get("values", [])
                 ]
+            # Fetch current block height for halving countdown
+            try:
+                height_resp = req.get(
+                    "https://blockchain.info/q/getblockcount", timeout=10
+                )
+                if height_resp.ok:
+                    current_height = int(height_resp.text.strip())
+                    halving_info = HALVING_DATA["SHA-256"]
+                    next_halving_block = ((current_height // halving_info["halving_interval"]) + 1) * halving_info["halving_interval"]
+                    blocks_remaining = next_halving_block - current_height
+                    est_seconds = blocks_remaining * halving_info["block_interval_seconds"]
+                    est_days = est_seconds / 86400
+                    from datetime import datetime, timedelta
+                    est_date = (datetime.utcnow() + timedelta(seconds=est_seconds)).strftime("%Y-%m-%d")
+                    results["halving"] = {
+                        "current_block": current_height,
+                        "next_halving_block": next_halving_block,
+                        "blocks_remaining": blocks_remaining,
+                        "estimated_days": round(est_days, 1),
+                        "estimated_date": est_date,
+                        "current_reward": halving_info["current_reward"],
+                        "post_halving_reward": halving_info["post_halving_reward"],
+                        "reward_reduction_pct": 50,
+                    }
+            except Exception as e:
+                logger.debug("BTC block height fetch failed: %s", e)
+
         elif algo == "Scrypt":
-            # bitinfocharts via CoinGecko-style — use blockchain endpoint
             resp = req.get(
                 "https://api.blockchair.com/litecoin/stats",
                 timeout=10,
@@ -719,7 +834,28 @@ def difficulty_history():
                 results["algorithm"] = "Scrypt"
                 results["current_difficulty"] = data.get("difficulty")
                 results["hashrate_24h"] = data.get("hashrate_24h")
-                results["data"] = []  # Blockchair doesn't give historical for free
+                results["data"] = []
+                # Halving countdown from block height
+                current_height = data.get("blocks")
+                if current_height:
+                    halving_info = HALVING_DATA["Scrypt"]
+                    next_halving_block = ((current_height // halving_info["halving_interval"]) + 1) * halving_info["halving_interval"]
+                    blocks_remaining = next_halving_block - current_height
+                    est_seconds = blocks_remaining * halving_info["block_interval_seconds"]
+                    est_days = est_seconds / 86400
+                    from datetime import datetime, timedelta
+                    est_date = (datetime.utcnow() + timedelta(seconds=est_seconds)).strftime("%Y-%m-%d")
+                    results["halving"] = {
+                        "current_block": current_height,
+                        "next_halving_block": next_halving_block,
+                        "blocks_remaining": blocks_remaining,
+                        "estimated_days": round(est_days, 1),
+                        "estimated_date": est_date,
+                        "current_reward": halving_info["current_reward"],
+                        "post_halving_reward": halving_info["post_halving_reward"],
+                        "reward_reduction_pct": 50,
+                    }
+
         elif algo == "Equihash":
             resp = req.get(
                 "https://api.blockchair.com/zcash/stats",
@@ -731,6 +867,25 @@ def difficulty_history():
                 results["algorithm"] = "Equihash"
                 results["current_difficulty"] = data.get("difficulty")
                 results["data"] = []
+                current_height = data.get("blocks")
+                if current_height:
+                    halving_info = HALVING_DATA["Equihash"]
+                    next_halving_block = ((current_height // halving_info["halving_interval"]) + 1) * halving_info["halving_interval"]
+                    blocks_remaining = next_halving_block - current_height
+                    est_seconds = blocks_remaining * halving_info["block_interval_seconds"]
+                    est_days = est_seconds / 86400
+                    from datetime import datetime, timedelta
+                    est_date = (datetime.utcnow() + timedelta(seconds=est_seconds)).strftime("%Y-%m-%d")
+                    results["halving"] = {
+                        "current_block": current_height,
+                        "next_halving_block": next_halving_block,
+                        "blocks_remaining": blocks_remaining,
+                        "estimated_days": round(est_days, 1),
+                        "estimated_date": est_date,
+                        "current_reward": halving_info["current_reward"],
+                        "post_halving_reward": halving_info["post_halving_reward"],
+                        "reward_reduction_pct": 50,
+                    }
     except Exception as e:
         logger.error("Difficulty fetch error: %s", e)
         return jsonify({"error": str(e)}), 500

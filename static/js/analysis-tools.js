@@ -456,8 +456,23 @@ async function loadDifficultyData(algo) {
         var resp = await fetch('/api/tools/difficulty?algo=' + encodeURIComponent(algo));
         var data = await resp.json();
 
+        // Halving countdown banner
+        var halvingHtml = '';
+        if (data.halving) {
+            var h = data.halving;
+            halvingHtml = '<div class="halving-banner" style="background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.3);border-radius:8px;padding:12px 16px;margin-bottom:16px;">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
+                '<div><strong style="color:var(--primary);">' + esc(data.coin) + ' Halving Countdown</strong></div>' +
+                '<div style="display:flex;gap:16px;font-size:0.9rem;">' +
+                '<span>Block <strong>' + h.current_block.toLocaleString() + '</strong> / ' + h.next_halving_block.toLocaleString() + '</span>' +
+                '<span><strong>' + h.blocks_remaining.toLocaleString() + '</strong> blocks left</span>' +
+                '<span><strong style="color:var(--warning);">~' + h.estimated_days + ' days</strong> (~' + h.estimated_date + ')</span>' +
+                '<span>Reward: ' + h.current_reward + ' → <strong style="color:var(--danger);">' + h.post_halving_reward + '</strong> (-' + h.reward_reduction_pct + '%)</span>' +
+                '</div></div></div>';
+        }
+
         if (data.data && data.data.length > 0) {
-            container.innerHTML = '<canvas id="difficultyCanvas" style="max-height:300px;"></canvas>';
+            container.innerHTML = halvingHtml + '<canvas id="difficultyCanvas" style="max-height:300px;"></canvas>';
             var ctx = document.getElementById('difficultyCanvas').getContext('2d');
 
             if (difficultyChart) difficultyChart.destroy();
@@ -497,7 +512,8 @@ async function loadDifficultyData(algo) {
                 '<span style="margin-left:16px;">Current: <strong>' + (values[values.length - 1] / 1e12).toFixed(2) + 'T</strong></span>' +
                 (change > 10 ? '<span style="margin-left:16px;color:var(--danger)">Difficulty rising fast — profits will decrease</span>' : '');
         } else if (data.current_difficulty) {
-            container.innerHTML = '<p>Current ' + esc(data.coin) + ' difficulty: <strong>' + data.current_difficulty.toLocaleString() + '</strong></p>' +
+            container.innerHTML = halvingHtml +
+                '<p>Current ' + esc(data.coin) + ' difficulty: <strong>' + data.current_difficulty.toLocaleString() + '</strong></p>' +
                 (data.hashrate_24h ? '<p>24h hashrate: <strong>' + (data.hashrate_24h / 1e12).toFixed(2) + ' TH/s</strong></p>' : '') +
                 '<p style="color:var(--text-muted);margin-top:8px;font-size:0.85rem;">Historical chart not available for ' + esc(data.algorithm) + ' on free API.</p>';
             infoDiv.innerHTML = '';

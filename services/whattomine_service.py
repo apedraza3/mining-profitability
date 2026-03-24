@@ -75,7 +75,7 @@ class WhatToMineService:
 
     def get_coins_index(self) -> dict | None:
         """Fetch the full GPU-mineable coins list."""
-        cached = self.cache.get("coins_index", 3600)
+        cached = self.cache.get("coins_index", self.ttl)
         if cached:
             return cached
         data = self._throttled_get(f"{self.base_url}/coins.json")
@@ -85,7 +85,7 @@ class WhatToMineService:
 
     def get_asic_index(self) -> dict | None:
         """Fetch the full ASIC-mineable coins list."""
-        cached = self.cache.get("asic_index", 3600)
+        cached = self.cache.get("asic_index", self.ttl)
         if cached:
             return cached
         data = self._throttled_get(f"{self.base_url}/asic.json")

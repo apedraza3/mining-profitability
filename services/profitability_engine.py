@@ -1,5 +1,7 @@
 import json
 import logging
+import math
+import time
 from datetime import datetime, timedelta
 
 from services.whattomine_service import WhatToMineService
@@ -10,6 +12,8 @@ from services.power_import import get_miner_actual_watts
 import config
 
 logger = logging.getLogger(__name__)
+
+CALCULATE_ALL_CACHE_TTL = 300  # 5 minutes
 
 
 class ProfitabilityEngine:
@@ -25,6 +29,8 @@ class ProfitabilityEngine:
         self.miningnow = miningnow
         self.inventory = inventory_mgr
         self.coin_mappings = self._load_coin_mappings()
+        self._calc_cache = None
+        self._calc_cache_time = 0
 
     def _load_coin_mappings(self) -> dict:
         try:
@@ -73,7 +79,7 @@ class ProfitabilityEngine:
 
         total_daily_profit = daily_profit * quantity
         days_to_roi = (
-            int(total_investment / total_daily_profit)
+            math.ceil(total_investment / total_daily_profit)
             if total_daily_profit > 0
             else -1
         )
@@ -214,20 +220,28 @@ class ProfitabilityEngine:
 
     def calculate_for_miner(
         self, miner: dict, location: dict, primary_only: bool = True,
-        solar_info: dict | None = None,
+        solar_info: dict | None = None, uptime_pct: float | None = None,
     ) -> dict:
         """Calculate profitability data for one miner.
         primary_only=True fetches only the main coin per algo (faster, for table view).
-        primary_only=False fetches all coins (for detail panel)."""
+        primary_only=False fetches all coins (for detail panel).
+        uptime_pct: if provided (0-100), adjusts electricity cost by actual uptime."""
         # Check for imported actual wattage data (CSV import)
         actual_watts = get_miner_actual_watts(miner.get("name", ""))
         nameplate_watts = miner.get("wattage", 0)
         effective_watts = actual_watts if actual_watts else nameplate_watts
 
+        # Adjust for uptime if we have PowerPool data
+        uptime_factor = 1.0
+        if uptime_pct is not None and 0 < uptime_pct < 100:
+            uptime_factor = uptime_pct / 100.0
+
         power_info = {
             "nameplate_watts": nameplate_watts,
             "actual_watts": actual_watts,
             "effective_watts": effective_watts,
+            "uptime_pct": round(uptime_pct, 1) if uptime_pct is not None else None,
+            "uptime_adjusted_watts": round(effective_watts * uptime_factor, 1),
             "source": "csv_import" if actual_watts else "nameplate",
         }
 
@@ -270,15 +284,16 @@ class ProfitabilityEngine:
             profits.append(("whattomine", wtm["daily_profit"]))
         if hrn["available"]:
             profits.append(("hashrateno", hrn["daily_profit"]))
+        data_available = len(profits) > 0
         if profits:
             best_source, best_daily = max(profits, key=lambda x: x[1])
         else:
             best_source, best_daily = None, 0
 
-        # Revenue from the best source; electricity is the same for all sources
+        # Revenue from the best source; electricity adjusted for actual uptime
         daily_electricity = self.daily_electricity_cost(
             effective_watts, location.get("electricity_cost_kwh", 0.10)
-        )
+        ) * uptime_factor
         if best_source == "whattomine":
             daily_revenue = wtm.get("daily_revenue", 0)
         elif best_source == "hashrateno":
@@ -296,6 +311,38 @@ class ProfitabilityEngine:
         # Breakeven electricity rate: $/kWh at which this miner's profit = $0
         daily_kwh = effective_watts * 24 / 1000
         breakeven_elec_rate = round(daily_revenue / daily_kwh, 4) if daily_kwh > 0 and daily_revenue > 0 else 0
+
+        # J/TH efficiency (joules per terahash-second)
+        hashrate = miner.get("hashrate", 0)
+        hashrate_unit = miner.get("hashrate_unit", "TH/s")
+        j_per_th = None
+        if hashrate > 0 and effective_watts > 0:
+            # Normalize to TH/s for comparison
+            hr_in_th = hashrate
+            if hashrate_unit == "GH/s":
+                hr_in_th = hashrate / 1000
+            elif hashrate_unit == "MH/s":
+                hr_in_th = hashrate / 1e6
+            elif hashrate_unit == "KH/s":
+                hr_in_th = hashrate / 1e9
+            elif hashrate_unit in ("H/s", "Sol/s"):
+                hr_in_th = hashrate / 1e12
+            elif hashrate_unit == "KSol/s":
+                hr_in_th = hashrate / 1e9
+            if hr_in_th > 0:
+                j_per_th = round(effective_watts / hr_in_th, 2)
+
+        # Waterfall breakdown: Revenue → Pool Fee → Electricity → Profit
+        pool_fee_pct = miner.get("pool_fee_pct", 0) or 0
+        pool_fee_daily = round(daily_revenue * pool_fee_pct / 100, 4) if pool_fee_pct > 0 else 0
+        waterfall = {
+            "gross_revenue": round(daily_revenue, 4),
+            "pool_fee": pool_fee_daily,
+            "pool_fee_pct": pool_fee_pct,
+            "net_revenue": round(daily_revenue - pool_fee_daily, 4),
+            "electricity_cost": round(daily_electricity, 4),
+            "net_profit": round(daily_revenue - pool_fee_daily - daily_electricity, 4),
+        }
 
         # Solar-adjusted electricity cost
         si = solar_info or {}
@@ -324,13 +371,18 @@ class ProfitabilityEngine:
             "best_daily_profit": round(best_daily, 2),
             "best_source": best_source,
             "breakeven_elec_rate": breakeven_elec_rate,
+            "j_per_th": j_per_th,
+            "waterfall": waterfall,
             "solar": {
                 "offset_pct": solar_offset_pct,
                 "daily_electricity": solar_elec,
                 "daily_profit": solar_profit,
                 "daily_savings": solar_savings,
             },
-            "status": "inactive" if is_inactive else self._get_status(best_daily),
+            "data_available": data_available,
+            "status": "inactive" if is_inactive else (
+                "no_data" if not data_available else self._get_status(best_daily)
+            ),
         }
 
     def _fetch_electricity_data(self) -> dict | None:
@@ -596,8 +648,16 @@ class ProfitabilityEngine:
 
         return suggestions
 
+    def invalidate_cache(self):
+        """Clear the calculate_all cache (called after cache refresh or inventory changes)."""
+        self._calc_cache = None
+        self._calc_cache_time = 0
+
     def calculate_all(self) -> dict:
-        """Calculate profitability for all miners in inventory."""
+        """Calculate profitability for all miners in inventory. Cached for 5 minutes."""
+        if self._calc_cache and (time.time() - self._calc_cache_time) < CALCULATE_ALL_CACHE_TTL:
+            return self._calc_cache
+
         miners = self.inventory.get_all_miners()
         locations = {l["id"]: l for l in self.inventory.get_all_locations()}
 
@@ -625,6 +685,14 @@ class ProfitabilityEngine:
                 "mining_daily_kwh": total_w * 24 / 1000 if total_w > 0 else 0,
             }
 
+        # Fetch uptime data if available (for electricity cost adjustment)
+        from services.history_service import HistoryService
+        try:
+            uptime_svc = HistoryService()
+            uptime_stats = uptime_svc.get_uptime_stats(days=7)
+        except Exception:
+            uptime_stats = {}
+
         results = []
         for miner in miners:
             loc_id = miner.get("location_id", "")
@@ -635,7 +703,11 @@ class ProfitabilityEngine:
                 "currency": "USD",
             })
             solar_info = location_solar.get(loc_id, {})
-            result = self.calculate_for_miner(miner, location, solar_info=solar_info)
+            miner_uptime = uptime_stats.get(miner.get("id"), {})
+            result = self.calculate_for_miner(
+                miner, location, solar_info=solar_info,
+                uptime_pct=miner_uptime.get("uptime_pct"),
+            )
             results.append(result)
 
         # Summary
@@ -741,7 +813,7 @@ class ProfitabilityEngine:
             ),
         }
 
-        return {
+        result = {
             "miners": results,
             "suggestions": suggestions,
             "summary": {
@@ -756,7 +828,7 @@ class ProfitabilityEngine:
                 "total_monthly_profit": round(total_daily_profit * 30, 2),
                 "total_investment": round(total_investment, 2),
                 "portfolio_roi_days": (
-                    int(total_investment / total_daily_profit)
+                    math.ceil(total_investment / total_daily_profit)
                     if total_daily_profit > 0
                     else -1
                 ),
@@ -772,6 +844,10 @@ class ProfitabilityEngine:
             "last_updated": datetime.now().isoformat(),
             "cache_status": cache_status,
         }
+
+        self._calc_cache = result
+        self._calc_cache_time = time.time()
+        return result
 
     def get_coin_switch_alerts(self) -> list[dict]:
         """Check if any algorithm has a more profitable coin than the primary."""

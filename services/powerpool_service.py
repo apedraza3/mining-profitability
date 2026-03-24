@@ -128,14 +128,21 @@ class PowerPoolService:
             if w["short_name"].lower() == miner_name.lower():
                 return w
 
-        # 3. Normalized containment match
+        # 3. Normalized containment match with length ratio guard
         def normalize(s):
             return s.lower().replace("_", "").replace("-", "").replace("+", "plus")
 
         norm_miner = normalize(miner_name)
         for w in workers:
             norm_worker = normalize(w["short_name"])
-            if norm_miner in norm_worker or norm_worker in norm_miner:
+            if norm_miner == norm_worker:
+                return w
+            # Only allow substring match if the shorter string is at least 70% of the longer
+            shorter, longer = sorted([norm_miner, norm_worker], key=len)
+            if len(shorter) == 0:
+                continue
+            length_ratio = len(shorter) / len(longer)
+            if length_ratio >= 0.7 and (shorter in longer):
                 return w
 
         return None

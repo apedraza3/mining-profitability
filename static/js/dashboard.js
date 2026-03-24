@@ -56,7 +56,8 @@ async function loadDashboard() {
         document.getElementById('lastUpdated').textContent =
             'Updated: ' + new Date(dashboardData.last_updated).toLocaleString();
     } catch (err) {
-        showToast('Error loading data: ' + err.message, 'error');
+        showToast('Error loading profitability data. Check if all data sources are reachable.', 'error');
+        console.error('Dashboard load error:', err);
     }
     showLoading(false);
 }
@@ -283,7 +284,7 @@ function renderMinerTable(minerResults) {
             <td>${actualCell}</td>
             <td class="${profitClass(profitPerKw)}">${formatCurrency(profitPerKw)}</td>
             <td>${r.roi && r.roi.days_to_roi > 0 ? r.roi.days_to_roi + 'd' : '--'}</td>
-            <td><span class="status-badge status-${r.status}">${r.status}</span></td>
+            <td><span class="status-badge status-${r.status}">${r.status === 'no_data' ? '⚠ No Data' : r.status}</span></td>
             <td>${poolCell}</td>
             <td class="action-btns" onclick="event.stopPropagation()">
                 <button class="btn-sm" onclick="editMiner('${m.id}')" title="Edit">&#9998;</button>
@@ -642,9 +643,16 @@ function renderPoolCell(minerId) {
         var uptimeClass = pct >= 99 ? 'profit-positive' : pct >= 95 ? 'profit-neutral' : 'profit-negative';
         uptimeSuffix = '<br><span class="' + uptimeClass + '" style="font-size:0.65rem;">' + pct + '% uptime</span>';
     }
+    // Stale share indicator
+    var staleSuffix = '';
+    if (poolData.stale_analysis && poolData.stale_analysis[minerId]) {
+        var sa = poolData.stale_analysis[minerId];
+        var staleClass = sa.health === 'good' ? 'profit-positive' : sa.health === 'warning' ? 'profit-neutral' : 'profit-negative';
+        staleSuffix = '<br><span class="' + staleClass + '" style="font-size:0.65rem;" title="Share efficiency: ' + sa.share_efficiency + '% | Stale: ' + sa.stale_pct + '% | Est. revenue loss: ' + sa.estimated_revenue_loss_pct + '%">' + sa.share_efficiency + '% eff</span>';
+    }
     if (w.online) {
         return '<span class="pool-status pool-online" title="' + esc(w.worker_name) + ' - ' + w.hashrate + ' ' + w.hashrate_units + '">' +
-            '<span class="pool-dot online"></span> ' + w.hashrate + ' ' + w.hashrate_units + '</span>' + uptimeSuffix;
+            '<span class="pool-dot online"></span> ' + w.hashrate + ' ' + w.hashrate_units + '</span>' + uptimeSuffix + staleSuffix;
     } else {
         return '<span class="pool-status pool-offline" title="' + esc(w.worker_name) + ' - OFFLINE">' +
             '<span class="pool-dot offline"></span> Offline</span>' + uptimeSuffix;

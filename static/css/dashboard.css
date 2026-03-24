@@ -227,6 +227,7 @@ body {
 .status-marginal { background: #854d0e; color: #fef9c3; }
 .status-unprofitable { background: #991b1b; color: #fecaca; }
 .status-inactive { background: var(--border); color: var(--text-muted); }
+.status-no_data { background: #581c87; color: #e9d5ff; }
 
 /* Action buttons in table */
 .action-btns { display: flex; gap: 4px; }

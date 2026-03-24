@@ -302,13 +302,16 @@ class HistoryService:
         return None
 
     def cleanup_old_data(self):
-        """Remove old data — uptime: 90 days, profit: 365 days."""
+        """Remove old data — uptime: 90 days, profit: 365 days. VACUUM to reclaim space."""
         conn = self._get_conn()
         uptime_cutoff = (datetime.now() - timedelta(days=90)).isoformat()
         profit_cutoff = (datetime.now() - timedelta(days=365)).isoformat()
-        conn.execute("DELETE FROM uptime_logs WHERE timestamp < ?", (uptime_cutoff,))
-        conn.execute(
+        up_deleted = conn.execute("DELETE FROM uptime_logs WHERE timestamp < ?", (uptime_cutoff,)).rowcount
+        prof_deleted = conn.execute(
             "DELETE FROM profit_snapshots WHERE timestamp < ?", (profit_cutoff,)
-        )
+        ).rowcount
         conn.commit()
+        if up_deleted > 0 or prof_deleted > 0:
+            conn.execute("VACUUM")
+            logger.info("Cleaned up %d uptime + %d profit rows, VACUUM complete", up_deleted, prof_deleted)
         conn.close()
