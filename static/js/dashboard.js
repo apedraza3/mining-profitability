@@ -171,6 +171,7 @@ function renderSummary(summary) {
     if (solarEl) {
         var savings30d = summary.solar_savings_30d || 0;
         var savingsDays = summary.solar_savings_days || 30;
+        var hasSolar = summary.total_solar_savings > 0;
         if (hasSolar || savings30d > 0) {
             solarEl.style.display = '';
             document.getElementById('solarDailySavings').textContent = formatCurrency(savings30d);
