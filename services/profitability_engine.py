@@ -367,8 +367,8 @@ class ProfitabilityEngine:
             },
             "roi": roi,
             "daily_revenue": round(daily_revenue, 2),
-            "daily_electricity": round(daily_electricity, 2),
-            "best_daily_profit": round(best_daily, 2),
+            "daily_electricity": round(solar_elec if solar_elec is not None else daily_electricity, 2),
+            "best_daily_profit": round(solar_profit if solar_profit is not None else best_daily, 2),
             "best_source": best_source,
             "breakeven_elec_rate": breakeven_elec_rate,
             "j_per_th": j_per_th,
@@ -381,7 +381,9 @@ class ProfitabilityEngine:
             },
             "data_available": data_available,
             "status": "inactive" if is_inactive else (
-                "no_data" if not data_available else self._get_status(best_daily)
+                "no_data" if not data_available else self._get_status(
+                    solar_profit if solar_profit is not None else best_daily
+                )
             ),
         }
 
@@ -832,9 +834,9 @@ class ProfitabilityEngine:
                 "unprofitable_count": unprofitable_count,
                 "marginal_count": marginal_count,
                 "total_daily_revenue": round(total_daily_revenue, 2),
-                "total_daily_electricity": round(total_daily_elec, 2),
-                "total_daily_profit": round(total_daily_profit, 2),
-                "total_monthly_profit": round(total_daily_profit * 30, 2),
+                "total_daily_electricity": round(total_solar_elec, 2),
+                "total_daily_profit": round(total_solar_profit - total_home_demand_charge / 30, 2),
+                "total_monthly_profit": round(total_solar_profit * 30 - total_home_demand_charge, 2),
                 "total_investment": round(total_investment, 2),
                 "portfolio_roi_days": (
                     math.ceil(total_investment / total_daily_profit)
