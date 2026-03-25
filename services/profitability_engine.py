@@ -437,7 +437,16 @@ class ProfitabilityEngine:
             settings["_bill_estimate"] = bill_estimate
         monthly_costs = elec_data.get("monthly_costs")
         if monthly_costs:
-            settings["_monthly_solar_savings"] = monthly_costs.get("total_solar_savings", 0)
+            actual_savings = monthly_costs.get("total_solar_savings", 0) or 0
+            actual_days = monthly_costs.get("days", 0) or 0
+            # Project to 30 days if we have partial data
+            if 0 < actual_days < 30:
+                projected = (actual_savings / actual_days) * 30
+                settings["_monthly_solar_savings"] = projected
+                settings["_solar_savings_days"] = actual_days
+            else:
+                settings["_monthly_solar_savings"] = actual_savings
+                settings["_solar_savings_days"] = actual_days
         solar_data = elec_data.get("realtime")
         daily_summary = elec_data.get("daily_summary")
 
@@ -834,6 +843,7 @@ class ProfitabilityEngine:
                 ),
                 "total_solar_savings": round(total_solar_savings, 2),
                 "solar_savings_30d": round(elec_settings.get("_monthly_solar_savings", 0) or 0, 2),
+                "solar_savings_days": elec_settings.get("_solar_savings_days", 30),
                 "total_solar_electricity": round(total_solar_elec, 2),
                 "total_solar_profit": round(total_solar_profit, 2),
                 "demand_rate": demand_rate,
