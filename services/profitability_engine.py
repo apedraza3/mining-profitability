@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 
 from services.whattomine_service import WhatToMineService
 from services.hashrateno_service import HashrateNoService
-from services.miningnow_service import MiningNowService
 from services.inventory_manager import InventoryManager
 from services.power_import import get_miner_actual_watts
 import config
@@ -21,12 +20,10 @@ class ProfitabilityEngine:
         self,
         whattomine: WhatToMineService,
         hashrateno: HashrateNoService,
-        miningnow: MiningNowService,
         inventory_mgr: InventoryManager,
     ):
         self.whattomine = whattomine
         self.hashrateno = hashrateno
-        self.miningnow = miningnow
         self.inventory = inventory_mgr
         self.coin_mappings = self._load_coin_mappings()
         self._calc_cache = None
@@ -183,33 +180,6 @@ class ProfitabilityEngine:
             logger.error("Hashrate.no error for %s: %s", miner.get("name"), e)
         return result
 
-    def _get_miningnow_data(self, miner: dict) -> dict:
-        """Get MiningNow data for a miner (ASIC only)."""
-        result = {
-            "available": False,
-            "rank": None,
-            "profitability_score": None,
-            "best_price": None,
-            "matched_model": None,
-            "match_confidence": 0,
-        }
-        if miner.get("type") != "ASIC":
-            return result
-
-        try:
-            model_key = miner.get("miningnow_model_key") or miner.get("model", "")
-            match = self.miningnow.find_miner_data(model_key)
-            if match:
-                result["available"] = True
-                result["rank"] = match.get("rank")
-                result["profitability_score"] = match.get("profitability_score")
-                result["best_price"] = match.get("best_price")
-                result["matched_model"] = match.get("name")
-                result["match_confidence"] = match.get("match_confidence", 0)
-        except Exception as e:
-            logger.error("MiningNow error for %s: %s", miner.get("name"), e)
-        return result
-
     def _get_status(self, daily_profit: float) -> str:
         if daily_profit >= config.PROFITABLE_THRESHOLD:
             return "profitable"
@@ -227,7 +197,7 @@ class ProfitabilityEngine:
         primary_only=False fetches all coins (for detail panel).
         uptime_pct: if provided (0-100), adjusts electricity cost by actual uptime."""
         # Check for imported actual wattage data (CSV import)
-        actual_watts = get_miner_actual_watts(miner.get("name", ""))
+        actual_watts = get_miner_actual_watts(miner.get("name", ""), power_import_key=miner.get("power_import_key", ""))
         nameplate_watts = miner.get("wattage", 0)
         effective_watts = actual_watts if actual_watts else nameplate_watts
 
@@ -275,8 +245,6 @@ class ProfitabilityEngine:
             hrn["daily_electricity"] = actual_elec
             hrn["daily_profit"] = hrn["daily_revenue"] - actual_elec
             hrn["monthly_profit"] = hrn["daily_profit"] * 30
-
-        mn = self._get_miningnow_data(miner)
 
         # Best daily profit from available sources
         profits = []
@@ -368,7 +336,6 @@ class ProfitabilityEngine:
             "sources": {
                 "whattomine": wtm,
                 "hashrateno": hrn,
-                "miningnow": mn,
             },
             "roi": roi,
             "daily_revenue": round(daily_revenue, 2),
@@ -709,6 +676,23 @@ class ProfitabilityEngine:
         except Exception:
             uptime_stats = {}
 
+        # Check TOU schedules — override flat rate with weighted daily average
+        try:
+            from services.tou_service import TOUService
+            tou_svc = TOUService(HistoryService())
+            for loc_id, loc in locations.items():
+                weighted = tou_svc.get_weighted_daily_rate(loc_id)
+                if weighted is not None:
+                    loc["_tou_weighted_rate"] = weighted
+                    loc["_flat_rate"] = loc.get("electricity_cost_kwh", 0.10)
+                    loc["electricity_cost_kwh"] = weighted
+                    logger.debug(
+                        "TOU override for %s: flat $%.4f → weighted $%.4f/kWh",
+                        loc.get("name"), loc["_flat_rate"], weighted,
+                    )
+        except Exception as e:
+            logger.debug("TOU check skipped: %s", e)
+
         results = []
         for miner in miners:
             loc_id = miner.get("location_id", "")
@@ -836,9 +820,6 @@ class ProfitabilityEngine:
                 self.whattomine.cache.get_age_seconds("coins_index")
             ),
             "hashrateno_age": self._format_age(self.hashrateno.get_cache_age()),
-            "miningnow_age": self._format_age(
-                self.miningnow.cache.get_age_seconds("miner_list")
-            ),
         }
 
         result = {

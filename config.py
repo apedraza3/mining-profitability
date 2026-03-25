@@ -17,8 +17,6 @@ COIN_MAPPINGS_FILE = DATA_DIR / "coin_mappings.json"
 # Cache TTLs (seconds)
 WHATTOMINE_CACHE_TTL = 1800       # 30 minutes
 HASHRATENO_CACHE_TTL = 86400      # 24 hours
-MININGNOW_CACHE_TTL = 21600       # 6 hours
-
 # API Keys
 HASHRATE_NO_API_KEY = os.getenv("HASHRATE_NO_API_KEY", "")
 
@@ -36,14 +34,6 @@ WHATTOMINE_REQUEST_DELAY = 3.0    # seconds between requests (be polite)
 
 # Hashrate.no
 HASHRATENO_BASE_URL = "https://hashrate.no/api/v2"
-
-# MiningNow
-MININGNOW_BASE_URL = "https://miningnow.com"
-MININGNOW_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
 
 # Hashrate.no reference hashrates per model slug.
 # Used to scale HR.no revenue to the user's actual hashrate.

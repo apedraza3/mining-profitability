@@ -42,7 +42,7 @@ class InventoryManager:
         miner_data.setdefault("quantity", 1)
         miner_data.setdefault("whattomine_coin_id", None)
         miner_data.setdefault("hashrateno_model_key", "")
-        miner_data.setdefault("miningnow_model_key", "")
+        miner_data.setdefault("power_import_key", "")
         miner_data.setdefault("pool_fee_pct", 1.0)
         miner_data.setdefault("hashrate_unit", "TH/s")
         miner_data.setdefault("powerpool_worker_key", "")

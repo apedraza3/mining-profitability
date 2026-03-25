@@ -14,7 +14,7 @@
       "purchase_date": "2025-06-15",
       "status": "active",
       "hashrateno_model_key": "",
-      "miningnow_model_key": "",
+      "power_import_key": "",
       "id": "example-miner-001",
       "notes": "",
       "whattomine_coin_id": null
@@ -33,7 +33,7 @@
       "purchase_date": "2025-09-01",
       "status": "active",
       "hashrateno_model_key": "",
-      "miningnow_model_key": "",
+      "power_import_key": "",
       "id": "example-miner-002",
       "notes": "",
       "whattomine_coin_id": null

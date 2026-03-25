@@ -6,21 +6,24 @@ import time as _time
 from functools import wraps
 
 import bcrypt
-from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, Response, jsonify, redirect, render_template, request, session, url_for
 
 import config
 from services.cache_manager import CacheManager
 from services.inventory_manager import InventoryManager
 from services.whattomine_service import WhatToMineService
 from services.hashrateno_service import HashrateNoService
-from services.miningnow_service import MiningNowService
 from services.profitability_engine import ProfitabilityEngine
 from services.powerpool_service import PowerPoolService
 from services.history_service import HistoryService
+from services.alert_service import AlertService
 from services.coinbase_service import CoinbaseService
 from services.power_import import (
     import_power_csv, get_power_data, clear_power_data
 )
+from services.pdu_service import PDUService
+from services.tax_export_service import TaxExportService
+from services.tou_service import TOUService
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -66,7 +69,6 @@ def login_required(f):
 # Initialize services
 wtm_cache = CacheManager(str(config.CACHE_DIR / "whattomine"))
 hrn_cache = CacheManager(str(config.CACHE_DIR / "hashrateno"))
-mn_cache = CacheManager(str(config.CACHE_DIR / "miningnow"))
 pp_cache = CacheManager(str(config.CACHE_DIR / "powerpool"))
 
 inventory_mgr = InventoryManager(
@@ -74,12 +76,15 @@ inventory_mgr = InventoryManager(
 )
 whattomine_svc = WhatToMineService(wtm_cache)
 hashrateno_svc = HashrateNoService(config.HASHRATE_NO_API_KEY, hrn_cache)
-miningnow_svc = MiningNowService(mn_cache)
 powerpool_svc = PowerPoolService(config.POWERPOOL_OBSERVER_KEY, pp_cache)
 engine = ProfitabilityEngine(
-    whattomine_svc, hashrateno_svc, miningnow_svc, inventory_mgr
+    whattomine_svc, hashrateno_svc, inventory_mgr
 )
 history_svc = HistoryService()
+alert_svc = AlertService(history_svc)
+pdu_svc = PDUService(history_svc)
+tax_export_svc = TaxExportService(history_svc)
+tou_svc = TOUService(history_svc)
 cb_cache = CacheManager(str(config.CACHE_DIR / "coinbase"))
 coinbase_svc = CoinbaseService(
     config.COINBASE_API_KEY_NAME, config.COINBASE_API_PRIVATE_KEY, cb_cache
@@ -89,14 +94,29 @@ coinbase_svc = CoinbaseService(
 # ---- Background uptime tracker ----
 
 def _uptime_tracker():
-    """Background thread: logs PowerPool worker uptime every 5 minutes."""
+    """Background thread: logs PowerPool worker uptime every 5 minutes,
+    and runs alert checks after each poll cycle."""
     _time.sleep(30)  # Wait for app to start
     while True:
         try:
+            miners = inventory_mgr.get_all_miners()
+            statuses = {}
             if powerpool_svc.is_configured():
-                miners = inventory_mgr.get_all_miners()
                 statuses = powerpool_svc.get_all_worker_statuses(miners)
                 history_svc.record_uptime(statuses, miners)
+
+            # ---- Alert checks ----
+            try:
+                if statuses:
+                    alert_svc.check_miner_offline(statuses, miners)
+                    alert_svc.check_hashrate_drop(statuses, miners)
+                # Check negative profit from latest profitability data
+                prof_data = engine.calculate_all()
+                miner_results = prof_data.get("miners", [])
+                if miner_results:
+                    alert_svc.check_negative_profit(miner_results)
+            except Exception as ae:
+                logger.error("Alert check error: %s", ae)
         except Exception as e:
             logger.error("Uptime tracker error: %s", e)
         _time.sleep(300)  # 5 minutes
@@ -389,12 +409,6 @@ def hrn_models():
     return jsonify(hashrateno_svc.get_all_model_names())
 
 
-@app.route("/api/sources/miningnow/models", methods=["GET"])
-@login_required
-def mn_models():
-    return jsonify(miningnow_svc.get_all_model_names())
-
-
 @app.route("/api/algorithms", methods=["GET"])
 @login_required
 def get_algorithms():
@@ -538,7 +552,6 @@ def wallet_accounts():
 def refresh_all_caches():
     wtm_cache.invalidate_all()
     hrn_cache.invalidate_all()
-    mn_cache.invalidate_all()
     pp_cache.invalidate_all()
     cb_cache.invalidate_all()
     engine.invalidate_cache()
@@ -551,7 +564,6 @@ def refresh_source_cache(source):
     caches = {
         "whattomine": wtm_cache,
         "hashrateno": hrn_cache,
-        "miningnow": mn_cache,
         "powerpool": pp_cache,
         "coinbase": cb_cache,
     }
@@ -574,10 +586,6 @@ def cache_status():
             "age_seconds": hashrateno_svc.get_cache_age(),
             "ttl_seconds": config.HASHRATENO_CACHE_TTL,
             "configured": hashrateno_svc.is_configured(),
-        },
-        "miningnow": {
-            "age_seconds": mn_cache.get_age_seconds("miner_list"),
-            "ttl_seconds": config.MININGNOW_CACHE_TTL,
         },
         "powerpool": {
             "age_seconds": powerpool_svc.get_cache_age(),
@@ -611,6 +619,67 @@ def uptime_stats():
 def coin_switch_alerts():
     """Check if any algorithm has a more profitable coin than the primary."""
     return jsonify(engine.get_coin_switch_alerts())
+
+
+# ---- Alert Settings & Log API ----
+
+@app.route("/api/settings/alerts", methods=["GET"])
+@login_required
+def get_alert_settings():
+    """Return all alert channel configurations."""
+    return jsonify(alert_svc.get_config())
+
+
+@app.route("/api/settings/alerts", methods=["PUT"])
+@login_required
+def save_alert_settings():
+    """Save alert configuration for a channel."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    channel = data.get("channel")
+    if channel not in ("telegram", "discord"):
+        return jsonify({"error": "channel must be 'telegram' or 'discord'"}), 400
+    settings = {
+        "enabled": data.get("enabled", True),
+        "alert_offline": data.get("alert_offline", True),
+        "alert_hashrate_drop": data.get("alert_hashrate_drop", True),
+        "alert_negative_profit": data.get("alert_negative_profit", True),
+        "alert_daily_summary": data.get("alert_daily_summary", True),
+        "hashrate_drop_pct": data.get("hashrate_drop_pct", 20.0),
+    }
+    alert_svc.save_config(
+        channel,
+        webhook_url=data.get("webhook_url"),
+        bot_token=data.get("bot_token"),
+        chat_id=data.get("chat_id"),
+        settings=settings,
+    )
+    return jsonify({"success": True})
+
+
+@app.route("/api/settings/alerts/test", methods=["POST"])
+@login_required
+def test_alert():
+    """Send a test message to all enabled channels."""
+    from datetime import datetime as _dt
+    msg = (
+        "\u2705 <b>Test Alert</b>\n"
+        "Your mining dashboard alert integration is working!\n"
+        f"Sent at: {_dt.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+    sent = alert_svc.send_alert("test", msg)
+    if sent:
+        return jsonify({"success": True, "message": "Test alert sent"})
+    return jsonify({"success": False, "message": "No enabled channels or send failed"}), 400
+
+
+@app.route("/api/alerts/recent", methods=["GET"])
+@login_required
+def recent_alerts():
+    """Return recent alert log entries."""
+    limit = request.args.get("limit", 50, type=int)
+    return jsonify(alert_svc.get_recent_alerts(limit=limit))
 
 
 # ---- Analysis Tools API ----
@@ -651,7 +720,6 @@ def swap_compare():
         "purchase_price": replacement.get("purchase_price", 0),
         "status": "active",
         "hashrateno_model_key": replacement.get("model", ""),
-        "miningnow_model_key": replacement.get("model", ""),
     }
 
     rep_result = engine.calculate_for_miner(rep_miner, location)
@@ -1169,6 +1237,220 @@ def solar_loan_analysis():
             "avg_monthly_savings": solar_roi.get("avg_monthly_savings", 0),
             "avg_monthly_kwh": solar_roi.get("avg_monthly_kwh", 0),
         },
+    })
+
+
+# ---- PDU / Auto-Pause API ----
+
+@app.route("/api/pdu/config/<miner_id>", methods=["GET"])
+@login_required
+def get_pdu_config(miner_id):
+    cfg = pdu_svc.get_config(miner_id)
+    return jsonify(cfg or {})
+
+
+@app.route("/api/pdu/config/<miner_id>", methods=["PUT"])
+@login_required
+def save_pdu_config(miner_id):
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    result = pdu_svc.save_config(miner_id, data)
+    return jsonify(result)
+
+
+@app.route("/api/pdu/status", methods=["GET"])
+@login_required
+def pdu_status():
+    return jsonify(pdu_svc.get_pause_status())
+
+
+@app.route("/api/pdu/check", methods=["POST"])
+@login_required
+def pdu_check():
+    """Manually trigger auto-pause check against current profitability."""
+    try:
+        data = engine.calculate_all()
+        actions = pdu_svc.check_and_autopause(data.get("miners", []))
+        return jsonify({"actions": actions})
+    except Exception as e:
+        logger.error("PDU check failed: %s", e)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/pdu/log", methods=["GET"])
+@login_required
+def pdu_log():
+    miner_id = request.args.get("miner_id")
+    limit = request.args.get("limit", 50, type=int)
+    return jsonify(pdu_svc.get_log(miner_id=miner_id, limit=limit))
+
+
+@app.route("/api/pdu/power/<miner_id>/<action>", methods=["POST"])
+@login_required
+def pdu_manual_power(miner_id, action):
+    """Manually power on/off a miner's PDU outlet."""
+    if action not in ("on", "off"):
+        return jsonify({"error": "Action must be 'on' or 'off'"}), 400
+    cfg = pdu_svc.get_config(miner_id)
+    if not cfg:
+        return jsonify({"error": "No PDU config for this miner"}), 404
+    if action == "on":
+        success = pdu_svc.power_on(cfg)
+    else:
+        success = pdu_svc.power_off(cfg)
+    return jsonify({"success": success, "action": action})
+
+
+# ---- Tax Export API ----
+
+@app.route("/api/export/tax/csv", methods=["GET"])
+@login_required
+def export_tax_csv():
+    start = request.args.get("start")
+    end = request.args.get("end")
+    if not start or not end:
+        return jsonify({"error": "start and end date parameters required (YYYY-MM-DD)"}), 400
+    try:
+        csv_data = tax_export_svc.generate_csv(start, end)
+        return Response(
+            csv_data,
+            mimetype="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=mining_tax_report_{start}_to_{end}.csv"},
+        )
+    except Exception as e:
+        logger.error("CSV export failed: %s", e)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/export/tax/pdf", methods=["GET"])
+@login_required
+def export_tax_pdf():
+    start = request.args.get("start")
+    end = request.args.get("end")
+    if not start or not end:
+        return jsonify({"error": "start and end date parameters required (YYYY-MM-DD)"}), 400
+    try:
+        pdf_data = tax_export_svc.generate_pdf(start, end)
+        return Response(
+            pdf_data,
+            mimetype="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename=mining_tax_report_{start}_to_{end}.pdf"},
+        )
+    except Exception as e:
+        logger.error("PDF export failed: %s", e)
+        return jsonify({"error": str(e)}), 500
+
+
+# ---- TOU (Time-of-Use) API ----
+
+@app.route("/api/locations/<location_id>/tou", methods=["GET"])
+@login_required
+def get_tou_schedule(location_id):
+    schedules = tou_svc.get_schedules(location_id)
+    current_rate = tou_svc.get_current_rate(location_id)
+    weighted_rate = tou_svc.get_weighted_daily_rate(location_id)
+    return jsonify({
+        "location_id": location_id,
+        "schedules": schedules,
+        "current_rate": current_rate,
+        "weighted_daily_rate": weighted_rate,
+    })
+
+
+@app.route("/api/locations/<location_id>/tou", methods=["PUT"])
+@login_required
+def save_tou_schedule(location_id):
+    data = request.get_json()
+    if not data or "periods" not in data:
+        return jsonify({"error": "periods array required"}), 400
+    schedules = tou_svc.save_schedules(location_id, data["periods"])
+    engine.invalidate_cache()  # TOU rates affect profitability
+    return jsonify({"schedules": schedules})
+
+
+@app.route("/api/locations/<location_id>/tou", methods=["DELETE"])
+@login_required
+def delete_tou_schedule(location_id):
+    deleted = tou_svc.delete_schedules(location_id)
+    engine.invalidate_cache()
+    return jsonify({"success": deleted})
+
+
+# ---- ROI Tracking API ----
+
+@app.route("/api/miners/<miner_id>/roi-history", methods=["GET"])
+@login_required
+def miner_roi_history(miner_id):
+    """Get cumulative earnings, electricity, and breakeven progress for a miner."""
+    miner = inventory_mgr.get_miner(miner_id)
+    if not miner:
+        return jsonify({"error": "Miner not found"}), 404
+
+    conn = history_svc._get_conn()
+
+    # Get cumulative totals from profit_snapshots
+    row = conn.execute(
+        """SELECT
+            COUNT(DISTINCT DATE(timestamp)) as days_mining,
+            SUM(daily_revenue) / COUNT(*) * COUNT(DISTINCT DATE(timestamp)) as total_revenue,
+            SUM(daily_electricity) / COUNT(*) * COUNT(DISTINCT DATE(timestamp)) as total_electricity,
+            SUM(daily_profit) / COUNT(*) * COUNT(DISTINCT DATE(timestamp)) as total_profit,
+            AVG(daily_profit) as avg_daily_profit,
+            MIN(DATE(timestamp)) as first_seen,
+            MAX(DATE(timestamp)) as last_seen
+           FROM profit_snapshots
+           WHERE miner_id = ?""",
+        (miner_id,),
+    ).fetchone()
+    conn.close()
+
+    if not row or not row["days_mining"]:
+        return jsonify({
+            "miner_id": miner_id,
+            "hardware_cost": miner.get("purchase_price", 0),
+            "total_earned_to_date": 0,
+            "total_electricity_to_date": 0,
+            "net_profit_to_date": 0,
+            "days_mining": 0,
+            "breakeven_progress_pct": 0,
+            "projected_breakeven_date": None,
+        })
+
+    hardware_cost = miner.get("purchase_price", 0) * miner.get("quantity", 1)
+    total_earned = row["total_revenue"] or 0
+    total_electricity = row["total_electricity"] or 0
+    net_profit = row["total_profit"] or 0
+    days_mining = row["days_mining"]
+    avg_daily = row["avg_daily_profit"] or 0
+
+    if hardware_cost > 0:
+        breakeven_pct = round(net_profit / hardware_cost * 100, 1)
+    else:
+        breakeven_pct = None  # N/A
+
+    projected_date = None
+    if hardware_cost > 0 and avg_daily > 0:
+        remaining = hardware_cost - net_profit
+        if remaining > 0:
+            from datetime import datetime, timedelta
+            days_left = remaining / avg_daily
+            projected_date = (datetime.now() + timedelta(days=days_left)).strftime("%Y-%m-%d")
+        else:
+            projected_date = "Already reached"
+
+    return jsonify({
+        "miner_id": miner_id,
+        "hardware_cost": hardware_cost,
+        "total_earned_to_date": round(total_earned, 2),
+        "total_electricity_to_date": round(total_electricity, 2),
+        "net_profit_to_date": round(net_profit, 2),
+        "days_mining": days_mining,
+        "avg_daily_profit": round(avg_daily, 2),
+        "breakeven_progress_pct": breakeven_pct,
+        "projected_breakeven_date": projected_date,
+        "first_seen": row["first_seen"],
+        "last_seen": row["last_seen"],
     })
 
 

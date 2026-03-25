@@ -7,7 +7,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN mkdir -p cache/whattomine cache/hashrateno cache/miningnow cache/powerpool
+RUN mkdir -p cache/whattomine cache/hashrateno cache/powerpool
 
 EXPOSE 5000
 

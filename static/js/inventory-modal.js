@@ -24,7 +24,7 @@ function openMinerModal(minerId) {
             document.getElementById('minerPurchaseDate').value = miner.purchase_date || '';
             document.getElementById('minerStatus').value = miner.status || 'active';
             document.getElementById('minerHrnKey').value = miner.hashrateno_model_key || '';
-            document.getElementById('minerMnKey').value = miner.miningnow_model_key || '';
+            document.getElementById('minerPowerImportKey').value = miner.power_import_key || '';
             document.getElementById('minerPpKey').value = miner.powerpool_worker_key || '';
         }
     } else {
@@ -60,7 +60,7 @@ async function saveMiner(event) {
         purchase_date: document.getElementById('minerPurchaseDate').value || '',
         status: document.getElementById('minerStatus').value,
         hashrateno_model_key: document.getElementById('minerHrnKey').value.trim(),
-        miningnow_model_key: document.getElementById('minerMnKey').value.trim(),
+        power_import_key: document.getElementById('minerPowerImportKey').value.trim(),
         powerpool_worker_key: document.getElementById('minerPpKey').value.trim(),
     };
 

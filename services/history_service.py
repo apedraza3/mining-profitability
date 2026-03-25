@@ -57,6 +57,78 @@ class HistoryService:
                 ON profit_snapshots(miner_id, timestamp);
             CREATE INDEX IF NOT EXISTS idx_uptime_miner_time
                 ON uptime_logs(miner_id, timestamp);
+
+            CREATE TABLE IF NOT EXISTS pool_payouts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                miner_id TEXT,
+                coin TEXT NOT NULL,
+                amount REAL NOT NULL,
+                fiat_value_usd REAL,
+                wallet_address TEXT,
+                tx_hash TEXT,
+                payout_date TEXT NOT NULL,
+                pool_name TEXT,
+                recorded_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_payouts_date ON pool_payouts(payout_date);
+
+            CREATE TABLE IF NOT EXISTS miner_roi_tracking (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                miner_id TEXT NOT NULL UNIQUE,
+                hardware_cost REAL NOT NULL DEFAULT 0,
+                total_earned REAL NOT NULL DEFAULT 0,
+                total_electricity_paid REAL NOT NULL DEFAULT 0,
+                first_tracked_date TEXT,
+                last_updated TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS alert_config (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel TEXT NOT NULL,
+                webhook_url TEXT,
+                bot_token TEXT,
+                chat_id TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                alert_offline INTEGER NOT NULL DEFAULT 1,
+                alert_hashrate_drop INTEGER NOT NULL DEFAULT 1,
+                alert_negative_profit INTEGER NOT NULL DEFAULT 1,
+                alert_daily_summary INTEGER NOT NULL DEFAULT 1,
+                hashrate_drop_pct REAL NOT NULL DEFAULT 20.0,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS alert_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                alert_type TEXT NOT NULL,
+                miner_id TEXT,
+                message TEXT NOT NULL,
+                sent_at TEXT NOT NULL,
+                channel TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS auto_pause_config (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                miner_id TEXT NOT NULL UNIQUE,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                pdu_host TEXT,
+                pdu_outlet INTEGER,
+                pdu_type TEXT DEFAULT 'tasmota',
+                negative_minutes_threshold INTEGER DEFAULT 60,
+                resume_profit_threshold REAL DEFAULT 0.50,
+                currently_paused INTEGER DEFAULT 0,
+                last_pause_at TEXT,
+                last_resume_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS tou_schedules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                location_id TEXT NOT NULL,
+                period_name TEXT NOT NULL,
+                rate_per_kwh REAL NOT NULL,
+                start_hour INTEGER NOT NULL,
+                end_hour INTEGER NOT NULL,
+                days_of_week TEXT DEFAULT '0,1,2,3,4,5,6'
+            );
         """)
         conn.commit()
         conn.close()
@@ -300,6 +372,249 @@ class HistoryService:
         if row:
             return {"peak_kw": row["peak_kw"], "recorded_at": row["recorded_at"]}
         return None
+
+    # ---- Payout tracking ----
+
+    def record_payout(self, miner_id, coin, amount, fiat_value_usd=None,
+                      wallet_address=None, tx_hash=None, payout_date=None,
+                      pool_name=None):
+        """Record a pool payout."""
+        conn = self._get_conn()
+        now = datetime.now().isoformat()
+        if not payout_date:
+            payout_date = datetime.now().strftime("%Y-%m-%d")
+        conn.execute(
+            """INSERT INTO pool_payouts
+               (miner_id, coin, amount, fiat_value_usd, wallet_address,
+                tx_hash, payout_date, pool_name, recorded_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (miner_id, coin, amount, fiat_value_usd, wallet_address,
+             tx_hash, payout_date, pool_name, now),
+        )
+        conn.commit()
+        conn.close()
+        logger.info("Recorded payout: %s %s for miner %s", amount, coin, miner_id)
+
+    def get_payouts(self, days=90, coin=None, miner_id=None):
+        """Get payouts within the last N days, optionally filtered."""
+        conn = self._get_conn()
+        since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        query = "SELECT * FROM pool_payouts WHERE payout_date >= ?"
+        params = [since]
+        if coin:
+            query += " AND coin = ?"
+            params.append(coin)
+        if miner_id:
+            query += " AND miner_id = ?"
+            params.append(miner_id)
+        query += " ORDER BY payout_date DESC"
+        rows = conn.execute(query, params).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def get_payout_summary(self):
+        """Get aggregated payout summary by coin."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT coin,
+                      COUNT(*) as payout_count,
+                      SUM(amount) as total_amount,
+                      SUM(fiat_value_usd) as total_usd,
+                      MIN(payout_date) as first_payout,
+                      MAX(payout_date) as last_payout
+               FROM pool_payouts
+               GROUP BY coin
+               ORDER BY total_usd DESC"""
+        ).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    # ---- ROI tracking ----
+
+    def get_cumulative_earnings(self, miner_id):
+        """SUM(daily_revenue) from profit_snapshots for a miner."""
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT COALESCE(SUM(daily_revenue), 0) as total FROM profit_snapshots WHERE miner_id = ?",
+            (miner_id,),
+        ).fetchone()
+        conn.close()
+        return round(row["total"], 2)
+
+    def get_cumulative_electricity(self, miner_id):
+        """SUM(daily_electricity) from profit_snapshots for a miner."""
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT COALESCE(SUM(daily_electricity), 0) as total FROM profit_snapshots WHERE miner_id = ?",
+            (miner_id,),
+        ).fetchone()
+        conn.close()
+        return round(row["total"], 2)
+
+    def get_roi_data(self, miner_id):
+        """Get ROI data: cumulative earnings, electricity, and hardware cost."""
+        conn = self._get_conn()
+        # Get tracking record
+        row = conn.execute(
+            "SELECT * FROM miner_roi_tracking WHERE miner_id = ?",
+            (miner_id,),
+        ).fetchone()
+
+        # Also get cumulative from snapshots
+        earnings = self.get_cumulative_earnings(miner_id)
+        electricity = self.get_cumulative_electricity(miner_id)
+
+        hardware_cost = 0
+        if row:
+            hardware_cost = row["hardware_cost"]
+            # Add any tracked deltas
+            earnings += row["total_earned"]
+            electricity += row["total_electricity_paid"]
+
+        conn.close()
+        net_profit = earnings - electricity
+        roi_pct = round((net_profit / hardware_cost) * 100, 1) if hardware_cost > 0 else 0
+        return {
+            "miner_id": miner_id,
+            "hardware_cost": hardware_cost,
+            "total_earned": round(earnings, 2),
+            "total_electricity": round(electricity, 2),
+            "net_profit": round(net_profit, 2),
+            "roi_pct": roi_pct,
+            "first_tracked_date": row["first_tracked_date"] if row else None,
+            "last_updated": row["last_updated"] if row else None,
+        }
+
+    def update_roi_tracking(self, miner_id, earned_delta=0, electricity_delta=0):
+        """Increment ROI tracking for a miner (used for manual adjustments)."""
+        conn = self._get_conn()
+        now = datetime.now().isoformat()
+        row = conn.execute(
+            "SELECT * FROM miner_roi_tracking WHERE miner_id = ?",
+            (miner_id,),
+        ).fetchone()
+        if row:
+            conn.execute(
+                """UPDATE miner_roi_tracking
+                   SET total_earned = total_earned + ?,
+                       total_electricity_paid = total_electricity_paid + ?,
+                       last_updated = ?
+                   WHERE miner_id = ?""",
+                (earned_delta, electricity_delta, now, miner_id),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO miner_roi_tracking
+                   (miner_id, hardware_cost, total_earned, total_electricity_paid,
+                    first_tracked_date, last_updated)
+                   VALUES (?, 0, ?, ?, ?, ?)""",
+                (miner_id, earned_delta, electricity_delta, now, now),
+            )
+        conn.commit()
+        conn.close()
+
+    # ---- Alert config helpers ----
+
+    def get_alert_configs(self):
+        """Get all alert configurations."""
+        conn = self._get_conn()
+        rows = conn.execute("SELECT * FROM alert_config ORDER BY id").fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def save_alert_config(self, channel, webhook_url=None, bot_token=None,
+                          chat_id=None, settings=None):
+        """Upsert an alert config for a channel (telegram or discord)."""
+        conn = self._get_conn()
+        now = datetime.now().isoformat()
+        if settings is None:
+            settings = {}
+
+        # Check if config for this channel exists
+        existing = conn.execute(
+            "SELECT id FROM alert_config WHERE channel = ?", (channel,)
+        ).fetchone()
+
+        if existing:
+            conn.execute(
+                """UPDATE alert_config SET
+                       webhook_url = ?, bot_token = ?, chat_id = ?,
+                       enabled = ?,
+                       alert_offline = ?, alert_hashrate_drop = ?,
+                       alert_negative_profit = ?, alert_daily_summary = ?,
+                       hashrate_drop_pct = ?
+                   WHERE channel = ?""",
+                (
+                    webhook_url, bot_token, chat_id,
+                    1 if settings.get("enabled", True) else 0,
+                    1 if settings.get("alert_offline", True) else 0,
+                    1 if settings.get("alert_hashrate_drop", True) else 0,
+                    1 if settings.get("alert_negative_profit", True) else 0,
+                    1 if settings.get("alert_daily_summary", True) else 0,
+                    settings.get("hashrate_drop_pct", 20.0),
+                    channel,
+                ),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO alert_config
+                   (channel, webhook_url, bot_token, chat_id, enabled,
+                    alert_offline, alert_hashrate_drop, alert_negative_profit,
+                    alert_daily_summary, hashrate_drop_pct, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    channel, webhook_url, bot_token, chat_id,
+                    1 if settings.get("enabled", True) else 0,
+                    1 if settings.get("alert_offline", True) else 0,
+                    1 if settings.get("alert_hashrate_drop", True) else 0,
+                    1 if settings.get("alert_negative_profit", True) else 0,
+                    1 if settings.get("alert_daily_summary", True) else 0,
+                    settings.get("hashrate_drop_pct", 20.0),
+                    now,
+                ),
+            )
+        conn.commit()
+        conn.close()
+
+    def log_alert(self, alert_type, message, channel, miner_id=None):
+        """Write an entry to the alert log."""
+        conn = self._get_conn()
+        now = datetime.now().isoformat()
+        conn.execute(
+            """INSERT INTO alert_log (alert_type, miner_id, message, sent_at, channel)
+               VALUES (?, ?, ?, ?, ?)""",
+            (alert_type, miner_id, message, now, channel),
+        )
+        conn.commit()
+        conn.close()
+
+    def get_recent_alerts(self, limit=50):
+        """Get the most recent alert log entries."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM alert_log ORDER BY sent_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def was_alert_sent_recently(self, alert_type, miner_id=None, hours=1):
+        """Check if the same alert was sent within the last N hours (dedup)."""
+        conn = self._get_conn()
+        since = (datetime.now() - timedelta(hours=hours)).isoformat()
+        if miner_id:
+            row = conn.execute(
+                """SELECT COUNT(*) as cnt FROM alert_log
+                   WHERE alert_type = ? AND miner_id = ? AND sent_at > ?""",
+                (alert_type, miner_id, since),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """SELECT COUNT(*) as cnt FROM alert_log
+                   WHERE alert_type = ? AND miner_id IS NULL AND sent_at > ?""",
+                (alert_type, since),
+            ).fetchone()
+        conn.close()
+        return row["cnt"] > 0
 
     def cleanup_old_data(self):
         """Remove old data — uptime: 90 days, profit: 365 days. VACUUM to reclaim space."""

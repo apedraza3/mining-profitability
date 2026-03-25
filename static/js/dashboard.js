@@ -496,7 +496,6 @@ function renderCoinBreakdown(container, result) {
 function renderSourceComparison(container, result) {
     const wtm = result.sources.whattomine;
     const hrn = result.sources.hashrateno;
-    const mn = result.sources.miningnow;
 
     container.innerHTML = `
         <div class="source-grid">
@@ -514,13 +513,6 @@ function renderSourceComparison(container, result) {
                 <p>Revenue: <span class="value">${hrn.available ? formatCurrency(hrn.daily_revenue) : '--'}</span></p>
                 <p>Profit: <span class="value ${profitClass(hrn.daily_profit)}">${hrn.available ? formatCurrency(hrn.daily_profit) : '--'}</span></p>
             </div>
-            <div class="source-card">
-                <h4><span class="source-dot ${mn.available ? 'fresh' : 'unavailable'}" style="display:inline-block;width:8px;height:8px;border-radius:50%"></span> MiningNow</h4>
-                <p>Matched: <span class="value">${mn.matched_model || '--'}</span></p>
-                <p>Rank: <span class="value">${mn.rank || '--'}</span></p>
-                <p>Score: <span class="value">${mn.profitability_score || '--'}</span></p>
-                <p>Best Price: <span class="value">${mn.best_price ? formatCurrency(mn.best_price) : '--'}</span></p>
-            </div>
         </div>
     `;
 }
@@ -529,17 +521,85 @@ function renderROITab(container, result) {
     const roi = result.roi;
     if (!roi) { container.innerHTML = '<p>No ROI data.</p>'; return; }
 
+    const minerId = result.miner.id;
+    const hwCost = roi.total_investment || 0;
+
+    // Show basic ROI data first, then fetch enhanced history
     container.innerHTML = `
         <div style="margin-bottom:16px">
-            <p>Investment: <strong>${formatCurrency(roi.total_investment)}</strong></p>
-            <p>Daily Profit: <strong class="${profitClass(roi.best_daily_profit)}">${formatCurrency(roi.best_daily_profit)}</strong></p>
-            <p>Monthly Profit: <strong class="${profitClass(roi.best_monthly_profit)}">${formatCurrency(roi.best_monthly_profit)}</strong></p>
-            <p>Days to ROI: <strong>${roi.days_to_roi > 0 ? roi.days_to_roi : 'N/A'}</strong></p>
-            <p>Payback Date: <strong>${roi.estimated_payback_date || 'N/A'}</strong></p>
+            <p>Hardware Cost: <strong>${formatCurrency(hwCost)}</strong></p>
+            <p>Daily Profit (current): <strong class="${profitClass(roi.best_daily_profit)}">${formatCurrency(roi.best_daily_profit)}</strong></p>
+            <p>Monthly Profit (current): <strong class="${profitClass(roi.best_monthly_profit)}">${formatCurrency(roi.best_monthly_profit)}</strong></p>
+            <p>Days to ROI (projected): <strong>${roi.days_to_roi > 0 ? roi.days_to_roi : 'N/A'}</strong></p>
+            <p>Payback Date (projected): <strong>${roi.estimated_payback_date || 'N/A'}</strong></p>
             <p>30-Day ROI: <strong>${roi.roi_percentage_30d ? roi.roi_percentage_30d.toFixed(1) + '%' : 'N/A'}</strong></p>
         </div>
-        <canvas id="roiChart"></canvas>
+        <div id="roiHistorySection" style="border-top:1px solid var(--border);padding-top:12px;">
+            <p style="color:var(--text-muted);font-size:0.85rem;">Loading historical ROI data...</p>
+        </div>
+        <canvas id="roiChart" style="margin-top:12px;"></canvas>
     `;
+
+    // Fetch enhanced ROI history from backend
+    fetch('/api/miners/' + minerId + '/roi-history')
+        .then(r => r.json())
+        .then(data => {
+            var section = document.getElementById('roiHistorySection');
+            if (!section) return;
+            if (!data.days_mining) {
+                section.innerHTML = '<p style="color:var(--text-muted);font-size:0.85rem;">No historical data recorded yet. Profit snapshots are collected hourly.</p>';
+                return;
+            }
+
+            var bePct = data.breakeven_progress_pct;
+            var beDisplay = bePct !== null ? bePct.toFixed(1) + '%' : 'N/A';
+            var beBarPct = bePct !== null ? Math.min(Math.max(bePct, 0), 100) : 0;
+            var beColor = beBarPct >= 100 ? 'var(--success)' : beBarPct >= 50 ? '#f59e0b' : 'var(--danger)';
+
+            section.innerHTML = `
+                <h4 style="font-size:0.9rem;margin-bottom:10px;">Actual ROI Progress</h4>
+                <div class="source-grid" style="grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
+                    <div class="source-card" style="padding:10px;">
+                        <p style="margin:0;">Total Earned</p>
+                        <p style="margin:0;"><strong class="profit-positive">${formatCurrency(data.total_earned_to_date)}</strong></p>
+                    </div>
+                    <div class="source-card" style="padding:10px;">
+                        <p style="margin:0;">Total Electricity</p>
+                        <p style="margin:0;"><strong class="profit-negative">${formatCurrency(data.total_electricity_to_date)}</strong></p>
+                    </div>
+                    <div class="source-card" style="padding:10px;">
+                        <p style="margin:0;">Net Profit to Date</p>
+                        <p style="margin:0;"><strong class="${profitClass(data.net_profit_to_date)}">${formatCurrency(data.net_profit_to_date)}</strong></p>
+                    </div>
+                    <div class="source-card" style="padding:10px;">
+                        <p style="margin:0;">Days Mining</p>
+                        <p style="margin:0;"><strong>${data.days_mining}</strong> <span style="color:var(--text-muted);font-size:0.8rem;">(avg ${formatCurrency(data.avg_daily_profit)}/day)</span></p>
+                    </div>
+                </div>
+                ${hwCost > 0 ? `
+                <div style="margin-bottom:8px;">
+                    <div style="display:flex;justify-content:space-between;font-size:0.85rem;margin-bottom:4px;">
+                        <span>Breakeven Progress</span>
+                        <span><strong>${beDisplay}</strong></span>
+                    </div>
+                    <div style="background:var(--bg);border-radius:6px;height:14px;overflow:hidden;">
+                        <div style="background:${beColor};height:100%;width:${beBarPct}%;border-radius:6px;transition:width 0.5s;"></div>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
+                        <span>${formatCurrency(data.net_profit_to_date)} earned</span>
+                        <span>${formatCurrency(hwCost)} target</span>
+                    </div>
+                </div>
+                <p style="font-size:0.85rem;">Projected Breakeven: <strong>${data.projected_breakeven_date || 'N/A'}</strong></p>
+                ` : '<p style="color:var(--text-muted);font-size:0.85rem;">Set a purchase price to see breakeven progress.</p>'}
+                <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">Tracking since ${data.first_seen || '--'}</p>
+            `;
+        })
+        .catch(err => {
+            var section = document.getElementById('roiHistorySection');
+            if (section) section.innerHTML = '<p style="color:var(--text-muted);font-size:0.85rem;">Could not load ROI history.</p>';
+            console.error('ROI history fetch error:', err);
+        });
 
     if (roi.days_to_roi > 0 && typeof renderROIChart === 'function') {
         renderROIChart(roi);
@@ -1209,4 +1269,59 @@ async function loadSolarMining() {
     } catch (err) {
         console.error('Failed to load solar mining data', err);
     }
+}
+
+// ---- Tax Export Modal ----
+function openExportModal() {
+    document.getElementById('exportModal').style.display = 'flex';
+    // Default to year-to-date
+    setExportRange('ytd');
+}
+
+function closeExportModal() {
+    document.getElementById('exportModal').style.display = 'none';
+}
+
+function setExportRange(preset) {
+    var startEl = document.getElementById('exportStartDate');
+    var endEl = document.getElementById('exportEndDate');
+    var now = new Date();
+    var end = now.toISOString().split('T')[0];
+    endEl.value = end;
+
+    switch (preset) {
+        case 'ytd':
+            startEl.value = now.getFullYear() + '-01-01';
+            break;
+        case 'lastyear':
+            var ly = now.getFullYear() - 1;
+            startEl.value = ly + '-01-01';
+            endEl.value = ly + '-12-31';
+            break;
+        case '30d':
+            var d30 = new Date(now);
+            d30.setDate(d30.getDate() - 30);
+            startEl.value = d30.toISOString().split('T')[0];
+            break;
+        case '90d':
+            var d90 = new Date(now);
+            d90.setDate(d90.getDate() - 90);
+            startEl.value = d90.toISOString().split('T')[0];
+            break;
+    }
+}
+
+function downloadExport(format) {
+    var start = document.getElementById('exportStartDate').value;
+    var end = document.getElementById('exportEndDate').value;
+    if (!start || !end) {
+        showToast('Please select both start and end dates', 'error');
+        return;
+    }
+    if (start > end) {
+        showToast('Start date must be before end date', 'error');
+        return;
+    }
+    var url = '/api/export/tax/' + format + '?start=' + encodeURIComponent(start) + '&end=' + encodeURIComponent(end);
+    window.open(url, '_blank');
 }

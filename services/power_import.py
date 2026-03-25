@@ -159,18 +159,32 @@ def get_power_data() -> dict:
     return _load_power_data()
 
 
-def get_miner_actual_watts(miner_name: str) -> float | None:
+def get_miner_actual_watts(miner_name: str, power_import_key: str = "") -> float | None:
     """Look up actual wattage for a miner from CSV imports.
-    Tries exact match first, then fuzzy substring match."""
+    If power_import_key is provided, matches on that key first (exact or substring).
+    Falls back to miner_name matching (exact then substring)."""
     data = _load_power_data()
     miners = data.get("miners", {})
 
-    # Exact match
+    # 1. Try power_import_key if provided
+    if power_import_key:
+        # Exact match on key
+        if power_import_key in miners:
+            watts = miners[power_import_key].get("avg_power_watts", 0)
+            return watts if watts > 0 else None
+        # Substring match on key
+        key_lower = power_import_key.lower()
+        for stored_name, info in miners.items():
+            if key_lower in stored_name.lower() or stored_name.lower() in key_lower:
+                watts = info.get("avg_power_watts", 0)
+                return watts if watts > 0 else None
+
+    # 2. Exact match on miner name
     if miner_name in miners:
         watts = miners[miner_name].get("avg_power_watts", 0)
         return watts if watts > 0 else None
 
-    # Substring match (imported names often include extra info)
+    # 3. Substring match on miner name (imported names often include extra info)
     name_lower = miner_name.lower()
     for stored_name, info in miners.items():
         if name_lower in stored_name.lower() or stored_name.lower() in name_lower:

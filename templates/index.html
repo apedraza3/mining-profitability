@@ -12,7 +12,6 @@
             <div class="source-indicators" id="sourceIndicators">
                 <span class="source-dot" data-source="whattomine" title="WhatToMine">WTM</span>
                 <span class="source-dot" data-source="hashrateno" title="Hashrate.no">HR</span>
-                <span class="source-dot" data-source="miningnow" title="MiningNow">MN</span>
                 <span class="source-dot" data-source="powerpool" title="PowerPool">PP</span>
             </div>
             <label class="auto-refresh-toggle">
@@ -22,6 +21,8 @@
             <button class="btn btn-primary" id="refreshBtn" onclick="refreshData()">Refresh Data</button>
             <button class="btn btn-secondary" onclick="openPowerImportModal()">CSV Import</button>
             <button class="btn btn-secondary" onclick="openLocationsModal()">Locations</button>
+            <button class="btn btn-secondary" onclick="openAlertsModal()" title="Telegram & Discord Alerts">Alerts</button>
+            <button class="btn btn-secondary" onclick="openExportModal()" title="Tax Export">Export</button>
             <button class="btn btn-success" onclick="openMinerModal()">+ Add Miner</button>
         </div>
     </header>
@@ -310,8 +311,8 @@
                             <input type="text" id="minerHrnKey" placeholder="Auto-matched by model name">
                         </div>
                         <div class="form-group">
-                            <label>MiningNow Model Key</label>
-                            <input type="text" id="minerMnKey" placeholder="Auto-matched by model name">
+                            <label>Power Import Key</label>
+                            <input type="text" id="minerPowerImportKey" placeholder="Match name from CSV power import">
                         </div>
                         <div class="form-group" style="grid-column: span 2;">
                             <label>PowerPool Worker Name</label>
@@ -377,10 +378,132 @@
             </div>
         </div>
     </div>
+    <!-- Alerts Modal -->
+    <div class="modal-overlay" id="alertsModal" style="display:none;">
+        <div class="modal" style="max-width:640px;">
+            <div class="modal-header">
+                <h3>Alert Settings</h3>
+                <button class="btn-close" onclick="closeAlertsModal()">&times;</button>
+            </div>
+            <div class="alerts-modal-content" style="padding:0 20px 20px;">
+                <!-- Channel Tabs -->
+                <div class="alert-tabs" style="display:flex;gap:0;margin-bottom:16px;border-bottom:1px solid var(--border);">
+                    <button class="alert-tab active" id="alertTabTelegram" onclick="switchAlertTab('telegram')" style="padding:8px 16px;background:none;border:none;border-bottom:2px solid var(--primary);color:var(--text);cursor:pointer;font-size:0.85rem;">Telegram</button>
+                    <button class="alert-tab" id="alertTabDiscord" onclick="switchAlertTab('discord')" style="padding:8px 16px;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;font-size:0.85rem;">Discord</button>
+                    <button class="alert-tab" id="alertTabLog" onclick="switchAlertTab('log')" style="padding:8px 16px;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;font-size:0.85rem;">Recent Alerts</button>
+                </div>
+
+                <!-- Telegram Config -->
+                <div id="alertPanelTelegram">
+                    <div class="form-group" style="margin-bottom:12px;">
+                        <label style="display:block;color:var(--text-muted);font-size:0.8rem;margin-bottom:4px;">Bot Token</label>
+                        <input type="text" id="alertTgBotToken" placeholder="123456:ABC-DEF..." style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:0.85rem;">
+                    </div>
+                    <div class="form-group" style="margin-bottom:12px;">
+                        <label style="display:block;color:var(--text-muted);font-size:0.8rem;margin-bottom:4px;">Chat ID</label>
+                        <input type="text" id="alertTgChatId" placeholder="-1001234567890 or your user ID" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:0.85rem;">
+                    </div>
+                    <label style="display:flex;align-items:center;gap:8px;margin-bottom:16px;cursor:pointer;">
+                        <input type="checkbox" id="alertTgEnabled" checked>
+                        <span style="color:var(--text);font-size:0.85rem;">Enabled</span>
+                    </label>
+                </div>
+
+                <!-- Discord Config -->
+                <div id="alertPanelDiscord" style="display:none;">
+                    <div class="form-group" style="margin-bottom:12px;">
+                        <label style="display:block;color:var(--text-muted);font-size:0.8rem;margin-bottom:4px;">Webhook URL</label>
+                        <input type="text" id="alertDiscordWebhook" placeholder="https://discord.com/api/webhooks/..." style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:0.85rem;">
+                    </div>
+                    <label style="display:flex;align-items:center;gap:8px;margin-bottom:16px;cursor:pointer;">
+                        <input type="checkbox" id="alertDiscordEnabled" checked>
+                        <span style="color:var(--text);font-size:0.85rem;">Enabled</span>
+                    </label>
+                </div>
+
+                <!-- Alert Types (shared) -->
+                <div id="alertTypesPanel">
+                    <h4 style="font-size:0.9rem;margin-bottom:10px;color:var(--text);">Alert Types</h4>
+                    <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer;">
+                        <input type="checkbox" id="alertOptOffline" checked>
+                        <span style="color:var(--text);font-size:0.85rem;">Miner offline</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer;">
+                        <input type="checkbox" id="alertOptHashrate" checked>
+                        <span style="color:var(--text);font-size:0.85rem;">Hashrate drop</span>
+                    </label>
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;margin-left:24px;">
+                        <label style="color:var(--text-muted);font-size:0.8rem;">Threshold:</label>
+                        <input type="number" id="alertHashratePct" value="20" min="5" max="90" step="5" style="width:60px;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:0.85rem;">
+                        <span style="color:var(--text-muted);font-size:0.8rem;">%</span>
+                    </div>
+                    <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer;">
+                        <input type="checkbox" id="alertOptNegProfit" checked>
+                        <span style="color:var(--text);font-size:0.85rem;">Negative profit</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;cursor:pointer;">
+                        <input type="checkbox" id="alertOptDailySummary" checked>
+                        <span style="color:var(--text);font-size:0.85rem;">Daily summary</span>
+                    </label>
+                </div>
+
+                <!-- Recent Alerts Log -->
+                <div id="alertPanelLog" style="display:none;">
+                    <div id="alertLogList" style="max-height:360px;overflow-y:auto;">
+                        <p style="color:var(--text-muted);font-size:0.85rem;">Loading...</p>
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="form-actions" id="alertActions" style="display:flex;gap:8px;margin-top:12px;">
+                    <button class="btn btn-success" onclick="saveAlertConfig()">Save</button>
+                    <button class="btn btn-primary" onclick="testAlert()">Send Test</button>
+                    <button class="btn btn-secondary" onclick="closeAlertsModal()">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- Tax Export Modal -->
+    <div class="modal-overlay" id="exportModal" style="display:none;">
+        <div class="modal" style="max-width:480px;">
+            <div class="modal-header">
+                <h3>Export Mining Tax Report</h3>
+                <button class="btn-close" onclick="closeExportModal()">&times;</button>
+            </div>
+            <div style="padding:0 20px 20px;">
+                <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:16px;">
+                    Generate a CSV or PDF report of daily mining income for tax purposes.
+                    Data is based on recorded profit snapshots.
+                </p>
+                <div class="form-grid" style="gap:12px;">
+                    <div class="form-group">
+                        <label>Start Date</label>
+                        <input type="date" id="exportStartDate" style="width:100%;">
+                    </div>
+                    <div class="form-group">
+                        <label>End Date</label>
+                        <input type="date" id="exportEndDate" style="width:100%;">
+                    </div>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:8px;">
+                    <button class="btn btn-sm btn-secondary" onclick="setExportRange('ytd')">Year to Date</button>
+                    <button class="btn btn-sm btn-secondary" onclick="setExportRange('lastyear')">Last Year</button>
+                    <button class="btn btn-sm btn-secondary" onclick="setExportRange('30d')">Last 30 Days</button>
+                    <button class="btn btn-sm btn-secondary" onclick="setExportRange('90d')">Last 90 Days</button>
+                </div>
+                <div class="form-actions" style="margin-top:16px;">
+                    <button class="btn btn-primary" onclick="downloadExport('csv')">Download CSV</button>
+                    <button class="btn btn-primary" onclick="downloadExport('pdf')">Download PDF</button>
+                    <button class="btn btn-secondary" onclick="closeExportModal()">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
 {% endblock %}
 
 {% block scripts %}
     <script src="/static/js/inventory-modal.js?v=7"></script>
     <script src="/static/js/charts.js?v=7"></script>
     <script src="/static/js/analysis-tools.js?v=7"></script>
+    <script src="/static/js/alerts.js?v=1"></script>
 {% endblock %}
