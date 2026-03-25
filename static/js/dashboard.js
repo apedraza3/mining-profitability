@@ -137,11 +137,9 @@ async function refreshData() {
 // ---- Rendering ----
 function renderSummary(summary) {
     if (!summary) return;
-    var hasSolar = summary.total_solar_savings > 0;
-    var dp = hasSolar ? summary.total_solar_profit : summary.total_daily_profit;
-    var demandDaily = (summary.home_demand_charge || 0) / 30;
-    var trueDP = dp - demandDaily;
-    var mp = trueDP * 30;
+    // Backend total_daily_profit already includes solar offset, pool fees, hosting, and demand charge
+    var trueDP = summary.total_daily_profit || 0;
+    var mp = summary.total_monthly_profit || 0;
 
     setProfit('totalDailyProfit', trueDP);
     setProfit('totalMonthlyProfit', mp);
@@ -691,11 +689,16 @@ function getActualProfit(r) {
     if (ratedHashBase <= 0) return null;
 
     var ratio = poolHashBase / ratedHashBase;
-    var actualRevenue = (r.daily_revenue || 0) * ratio;
+    var grossRevenue = (r.daily_revenue || 0) * ratio;
+    // Deduct pool fee
+    var poolFeePct = (r.miner.pool_fee_pct || 0) / 100;
+    var actualRevenue = grossRevenue * (1 - poolFeePct);
     // Use solar-adjusted electricity if available
     var solar = r.solar || {};
     var elec = (solar.daily_electricity != null && solar.offset_pct > 0) ? solar.daily_electricity : (r.daily_electricity || 0);
-    return actualRevenue - elec;
+    // Deduct hosting fee (monthly / 30)
+    var hostingDaily = (r.location && r.location.hosting_fee_monthly || 0) / 30;
+    return actualRevenue - elec - hostingDaily;
 }
 
 function renderPoolCell(minerId) {

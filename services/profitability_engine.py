@@ -269,12 +269,7 @@ class ProfitabilityEngine:
         else:
             daily_revenue = 0
 
-        roi = self.calculate_roi(
-            miner.get("purchase_price", 0),
-            miner.get("quantity", 1),
-            best_daily,
-            miner.get("purchase_date", ""),
-        )
+        # ROI calculated after solar_profit is determined (moved below)
 
         # Breakeven electricity rate: $/kWh at which this miner's profit = $0
         daily_kwh = effective_watts * 24 / 1000
@@ -328,6 +323,13 @@ class ProfitabilityEngine:
             solar_elec = None
             solar_profit = round(net_revenue - daily_electricity - hosting_fee_daily, 2)
             solar_savings = None
+
+        roi = self.calculate_roi(
+            miner.get("purchase_price", 0),
+            miner.get("quantity", 1),
+            solar_profit,
+            miner.get("purchase_date", ""),
+        )
 
         return {
             "miner": miner,
@@ -837,8 +839,8 @@ class ProfitabilityEngine:
                 "total_monthly_profit": round(total_solar_profit * 30 - total_home_demand_charge, 2),
                 "total_investment": round(total_investment, 2),
                 "portfolio_roi_days": (
-                    math.ceil(total_investment / total_daily_profit)
-                    if total_daily_profit > 0
+                    math.ceil(total_investment / (total_solar_profit - total_home_demand_charge / 30))
+                    if (total_solar_profit - total_home_demand_charge / 30) > 0
                     else -1
                 ),
                 "total_solar_savings": round(total_solar_savings, 2),
