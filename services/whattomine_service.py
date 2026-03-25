@@ -141,6 +141,14 @@ class WhatToMineService:
             ref = self.get_coin_reference_data(coin_id)
             if ref and "revenue" in ref:
                 ref_revenue = _parse_dollar(ref.get("revenue"))
+                # Fallback: if revenue rounds to $0.00 at 1 unit, compute from rewards × exchange rate
+                if ref_revenue == 0:
+                    try:
+                        ref_rewards = float(ref.get("estimated_rewards", 0) or 0)
+                        exchange_rate = float(ref.get("exchange_rate", 0) or 0)
+                        ref_revenue = ref_rewards * exchange_rate
+                    except (ValueError, TypeError):
+                        pass
                 daily_revenue = ref_revenue * hashrate
                 daily_electricity = (wattage * 24 / 1000) * elec_cost
                 daily_profit = daily_revenue - daily_electricity
