@@ -1,47 +1,85 @@
 # Mining Profitability Dashboard
 
-A real-time cryptocurrency mining profitability tracker that aggregates data from multiple sources to give miners a unified view of their operation's performance, costs, and ROI.
+A self-hosted, real-time cryptocurrency mining profitability tracker that aggregates data from multiple sources to give miners a unified view of their operation's performance, costs, and ROI.
 
 Built to solve a real problem: managing a fleet of ASIC miners across multiple locations with different electricity rates, solar offsets, and hosting providers — without juggling spreadsheets and browser tabs.
+
+**The only actively maintained, self-hosted, Docker-native mining dashboard in the open source space.**
 
 ![Python](https://img.shields.io/badge/Python-3.13-blue)
 ![Flask](https://img.shields.io/badge/Flask-3.1-green)
 ![Docker](https://img.shields.io/badge/Docker-Compose-blue)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
+## Why This Exists
+
+Every major mining monitor is either cloud-dependent (Hive OS, minerstat, Braiins), Windows-centric (Awesome Miner), marketplace-locked (NiceHash), enterprise-only (Foreman), or abandoned open source. This project fills the gap for technically capable homelab miners who want:
+
+- **Real electricity costs** from actual smart meter data (not estimates)
+- **Solar integration** — nobody else does this
+- **Self-hosted + Docker** — one command deploy, your data never leaves your network
+- **Accurate profitability** — pool fees, demand charges, solar offset, hosting fees all factored in
+- **No subscriptions** — free forever
+
 ## Features
 
 ### Dashboard
 - **Fleet summary** — daily/monthly profit, total investment, ROI timeline, fleet health at a glance
-- **Per-miner breakdown** — sortable table with revenue, electricity cost, profit, and status per unit
-- **Location breakdown** — profit aggregated by mining site with per-location electricity rates
+- **Per-miner breakdown** — sortable table with revenue, electricity cost, expected vs actual profit, and status per unit
+- **Location breakdown** — profit aggregated by mining site with per-location electricity rates and solar offset
 - **Profit history** — 7/30/90-day trend charts built with Chart.js
 - **Coin switch alerts** — notifies when a more profitable coin is available for your algorithm
 - **Auto-refresh** — optional 30-minute polling to keep numbers current
 
+### Telegram & Discord Alerts
+- **Miner offline** — instant notification when a worker drops off the pool
+- **Hashrate drop** — alert when hashrate drops below configurable threshold (default 20%)
+- **Negative profit** — alert when a miner becomes unprofitable
+- **Daily summary** — automated daily P&L report with top performers
+- Configurable per-channel with test message support
+
+### Smart PDU Auto-Pause (Strike Price)
+Automatically power off miners when profit goes negative, resume when profitable:
+- **Tasmota** smart plugs — HTTP API control
+- **TP-Link Kasa** — smart plug integration
+- **Generic REST** — configurable URL template for any PDU with an API
+- Configurable pause threshold, resume threshold, and cooldown period per miner
+
+### Tax Export
+- **CSV export** — mining income report with date, miner, algorithm, revenue, electricity cost, net profit
+- **PDF export** — formatted tax report with summary table and daily breakdown
+- Date range picker with quick presets (YTD, last year, 30/90 days)
+
+### Time-of-Use Electricity Rates
+- Support peak/off-peak/super-off-peak rate schedules per location
+- Automatic weighted daily average for profitability calculations
+- Handles overnight spans (e.g., off-peak 10 PM - 6 AM)
+
+### ROI & Breakeven Tracker
+- Per-miner: total earned to date, total electricity paid, net profit, breakeven progress
+- Uses actual historical data from profit snapshots (not projections)
+- Progress bar with projected breakeven date
+
 ### Multi-Source Data Aggregation
-The core differentiator. Instead of trusting a single source, profitability is calculated from up to three independent sources, and the best estimate is used:
+Instead of trusting a single source, profitability is calculated from multiple independent sources:
 
 | Source | Method | Data |
 |--------|--------|------|
 | **WhatToMine** | Public API (throttled) | Coin profitability, difficulty, nethash |
 | **Hashrate.no** | Authenticated API | ASIC/GPU model-specific estimates |
-| **MiningNow** | Web scraping (3 fallback strategies) | ASIC rankings and specs |
 
 Each source is independently cached with configurable TTLs and graceful fallback if unavailable.
 
 ### Analysis Tools
-
 - **Swap Calculator** — compare your current miner vs a replacement: profit delta, breakeven days, monthly savings, profit-per-watt
 - **Power Optimizer** — greedy knapsack algorithm that selects the most profitable miner subset within a wattage budget
 - **Pool Comparison** — curated fee database for 10-15 pools per algorithm (SHA-256, Scrypt, Equihash, KHeavyHash, Etchash)
 - **Difficulty Trends** — 180-day historical difficulty charts for BTC, LTC, ZEC from public blockchain APIs
 
 ### Integrations
-
-- **PowerPool** — live worker monitoring matched to your inventory (online/offline status, hashrate, shares, earnings)
-- **Coinbase Wallet** — portfolio balance and holdings via CDP API (JWT/ES256 auth)
-- **Solar Integration** — connects to a companion electricity monitoring dashboard to calculate real solar offset savings on your electricity costs
+- **PowerPool** — live worker monitoring matched to your inventory (online/offline status, hashrate, shares, efficiency)
+- **Solar Integration** — connects to a companion electricity monitoring dashboard to calculate real solar offset savings from actual metered production
+- **Smart Meter Integration** — actual electricity costs from Emporia Vue / SunPower PVS6 data
 - **CSV Power Import** — upload power consumption reports (Foreman-compatible) for actual vs rated wattage tracking
 
 ### Solar + Mining Economics
@@ -51,51 +89,26 @@ For miners with solar panels, the dashboard calculates:
 - Demand charge impact (peak kW tracking with high-water mark per billing cycle)
 - Solar loan ROI analysis — net monthly savings vs loan payment, lifetime value projection
 
-## Architecture
+## Profitability Calculation
+
+The engine calculates per-miner profitability with all costs factored in:
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   Flask App (app.py)                 │
-│              35+ REST API endpoints                  │
-├─────────────────────────────────────────────────────┤
-│                  Services Layer                      │
-│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ │
-│  │ Profitability │ │  Inventory   │ │   History    │ │
-│  │    Engine     │ │   Manager    │ │   Service    │ │
-│  └──────┬───────┘ └──────────────┘ └──────────────┘ │
-│         │                                            │
-│  ┌──────┴────────────────────────────────┐          │
-│  │         Data Source Services           │          │
-│  │  WhatToMine  Hashrate.no  MiningNow   │          │
-│  │  PowerPool   Coinbase     PowerImport │          │
-│  └──────┬────────────────────────────────┘          │
-│         │                                            │
-│  ┌──────┴───────┐                                   │
-│  │ CacheManager │  TTL-based JSON file cache        │
-│  └──────────────┘  per service, per endpoint        │
-├─────────────────────────────────────────────────────┤
-│  Frontend: Vanilla JS + Chart.js + CSS Variables    │
-│  Dark theme, responsive, no build step required     │
-└─────────────────────────────────────────────────────┘
-         │
-    External APIs
-    ├── whattomine.com (public, throttled 3s delay)
-    ├── hashrate.no (API key, 24hr cache)
-    ├── miningnow.com (scraped, 6hr cache)
-    ├── api.powerpool.io (observer key, 2min cache)
-    ├── api.coinbase.com (CDP JWT, 5min cache)
-    ├── blockchain.com (public, on-demand)
-    └── Electricity Dashboard API (local, on-demand)
+daily_revenue    = best_of(whattomine, hashrateno) × (actual_hashrate / rated_hashrate)
+pool_fee         = daily_revenue × pool_fee_pct
+net_revenue      = daily_revenue - pool_fee
+daily_electricity = (wattage / 1000) × 24 × electricity_rate × (1 - solar_offset)
+hosting_fee      = monthly_hosting_fee / 30
+daily_profit     = net_revenue - daily_electricity - hosting_fee
+
+# Summary includes demand charge
+total_daily_profit = sum(miner_profits) - (demand_charge / 30)
 ```
 
-### Key Design Decisions
-
-- **File-based JSON storage** for inventory/locations — no database setup required, easy to inspect and version control
-- **SQLite** only for time-series data (profit snapshots, uptime logs) where append performance matters
-- **Multi-strategy scraping** for MiningNow — tries Next.js `__NEXT_DATA__`, then `__next_f.push()` chunks, then HTML parsing as fallback
-- **Fuzzy model matching** with rapidfuzz (weighted token_set + partial + ratio scoring) for mapping user miner names to API model identifiers
-- **Reference-based scaling** for Hashrate.no — fetches profitability once per model at reference hashrate, then scales linearly to user's actual hashrate
-- **Greedy knapsack** for power optimization — sorts miners by profit-per-watt descending, packs until budget exhausted
+Status thresholds:
+- **Profitable** (green): >= $1.00/day
+- **Marginal** (yellow): $0.00 - $0.99/day
+- **Unprofitable** (red): < $0.00/day
 
 ## Quick Start
 
@@ -141,23 +154,14 @@ python app.py
 |----------|----------|-------------|
 | `HASHRATE_NO_API_KEY` | Optional | API key from [hashrate.no/account](https://hashrate.no/account). Enables second profitability source |
 | `POWERPOOL_OBSERVER_KEY` | Optional | Observer key from PowerPool dashboard. Enables live worker monitoring |
-| `COINBASE_API_KEY_NAME` | Optional | CDP API key name from Coinbase Developer Platform |
-| `COINBASE_API_PRIVATE_KEY` | Optional | CDP API private key (ES256) |
 | `DASHBOARD_USERNAME` | Optional | Login username (default: `admin`) |
 | `DASHBOARD_PASSWORD` | Optional | Login password. **Leave blank to disable auth** |
-| `ELECTRICITY_API_URL` | Optional | URL of companion electricity dashboard (default: `http://127.0.0.1:5001`) |
+| `ELECTRICITY_API_URL` | Optional | URL of companion electricity dashboard for solar/demand data |
 | `FLASK_HOST` | Optional | Bind address (default: `127.0.0.1`) |
 | `FLASK_PORT` | Optional | Port (default: `5000`) |
-
-### Cache TTLs (`config.py`)
-
-| Source | Default TTL | Rationale |
-|--------|-------------|-----------|
-| WhatToMine | 30 min | Coin prices fluctuate; balance freshness vs rate limits |
-| Hashrate.no | 24 hrs | Model-level estimates change slowly |
-| MiningNow | 6 hrs | ASIC rankings update infrequently |
-| PowerPool | 2 min | Worker status needs near-real-time visibility |
-| Coinbase | 5 min | Portfolio balances for dashboard display |
+| `FLASK_DEBUG` | Optional | Debug mode (default: `false`) |
+| `COINBASE_API_KEY_NAME` | Optional | CDP API key name from Coinbase Developer Platform |
+| `COINBASE_API_PRIVATE_KEY` | Optional | CDP API private key (ES256) |
 
 ### Adding Miners
 
@@ -175,7 +179,7 @@ Miners can be added through the UI (+ Add Miner button) or by editing `data/inve
   "location_id": "location-1",
   "quantity": 2,
   "purchase_price": 5000,
-  "purchase_date": "2025-06-15",
+  "pool_fee_pct": 1.0,
   "status": "active"
 }
 ```
@@ -187,100 +191,51 @@ Miners can be added through the UI (+ Add Miner button) or by editing `data/inve
   "id": "location-1",
   "name": "garage",
   "electricity_cost_kwh": 0.10,
+  "hosting_fee_monthly": 0,
   "currency": "USD"
 }
 ```
 
-## API Reference
-
-### Profitability
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/profitability` | GET | Full fleet profitability (all sources, suggestions, by-location) |
-| `/api/profitability/<id>` | GET | Single miner detailed breakdown |
-| `/api/alerts/coin-switch` | GET | Coins more profitable than current primary |
-| `/api/history/profit?days=30` | GET | Daily profit snapshots |
-
-### Inventory Management
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/miners` | GET | List all miners |
-| `/api/miners` | POST | Add a miner |
-| `/api/miners/<id>` | PUT | Update a miner |
-| `/api/miners/<id>` | DELETE | Remove a miner |
-| `/api/miners/<id>/duplicate` | POST | Clone a miner |
-| `/api/locations` | GET/POST | List/add locations |
-| `/api/locations/<id>` | PUT/DELETE | Update/remove location |
-
-### Analysis Tools
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/tools/swap-compare` | POST | Compare current vs replacement miner |
-| `/api/tools/power-optimize` | POST | Knapsack optimization within watt budget |
-| `/api/tools/difficulty` | GET | Historical difficulty trends |
-| `/api/pool-summary` | GET | Miner algorithms + pools for comparison page |
-
-### Data Sources
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/sources/whattomine/coins` | GET | Available WhatToMine coins |
-| `/api/sources/hashrateno/models` | GET | Hashrate.no miner models |
-| `/api/sources/miningnow/models` | GET | MiningNow ASIC database |
-| `/api/algorithms` | GET | Supported mining algorithms |
-| `/api/cache/status` | GET | Cache age per source |
-| `/api/cache/refresh` | POST | Force refresh all caches |
-| `/api/cache/refresh/<source>` | POST | Refresh specific source |
-
-### Integrations
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/pool/workers` | GET | PowerPool worker statuses |
-| `/api/pool/overview` | GET | Per-algorithm mining overview |
-| `/api/pool/revenue` | GET | Pool balance and earnings |
-| `/api/wallet/portfolio` | GET | Coinbase portfolio summary |
-| `/api/wallet/accounts` | GET | All wallet accounts |
-| `/api/electricity/solar-mining` | GET | Real-time solar + mining data |
-| `/api/power-import/upload` | POST | Upload CSV power report |
-
-## Profitability Calculation
-
-The engine calculates per-miner profitability as:
+## Architecture
 
 ```
-daily_revenue   = best_of(whattomine, hashrateno, miningnow)
-daily_electricity = (wattage / 1000) * 24 * electricity_rate
-daily_profit    = daily_revenue - daily_electricity
+┌─────────────────────────────────────────────────────┐
+│                   Flask App (app.py)                 │
+│              50+ REST API endpoints                  │
+├─────────────────────────────────────────────────────┤
+│                  Services Layer                      │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ │
+│  │ Profitability │ │  Inventory   │ │   History    │ │
+│  │    Engine     │ │   Manager    │ │   Service    │ │
+│  └──────┬───────┘ └──────────────┘ └──────┬───────┘ │
+│         │                                  │         │
+│  ┌──────┴──────────────────────────┐ ┌────┴───────┐ │
+│  │      Data Source Services       │ │  New Svcs  │ │
+│  │  WhatToMine  Hashrate.no       │ │  Alerts    │ │
+│  │  PowerPool   PowerImport       │ │  PDU       │ │
+│  └──────┬──────────────────────────┘ │  TOU       │ │
+│         │                            │  TaxExport │ │
+│  ┌──────┴───────┐                    └────────────┘ │
+│  │ CacheManager │  TTL-based JSON file cache        │
+│  └──────────────┘  per service, per endpoint        │
+├─────────────────────────────────────────────────────┤
+│  Frontend: Vanilla JS + Chart.js + CSS Variables    │
+│  Dark theme, responsive, no build step required     │
+└─────────────────────────────────────────────────────┘
+         │
+    External APIs
+    ├── whattomine.com (public, throttled 3s delay)
+    ├── hashrate.no (API key, 24hr cache)
+    ├── api.powerpool.io (observer key, 2min cache)
+    ├── Electricity Dashboard API (local, solar/demand)
+    └── Telegram / Discord (alert webhooks)
 ```
-
-With solar offset applied:
-
-```
-solar_offset    = min(solar_daily_kwh / mining_daily_kwh, 1.0)
-effective_rate  = base_rate * (1 - solar_offset)
-```
-
-ROI calculation:
-
-```
-days_to_roi     = total_investment / (daily_profit * quantity)
-roi_30d_pct     = (daily_profit * 30 / total_investment) * 100
-```
-
-Status thresholds:
-- **Profitable** (green): >= $1.00/day
-- **Marginal** (yellow): $0.00 - $0.99/day
-- **Unprofitable** (red): < $0.00/day
 
 ## Project Structure
 
 ```
 mining-profitability/
-├── app.py                      # Flask app, all routes (~1100 lines)
+├── app.py                      # Flask app, 50+ routes, background threads
 ├── config.py                   # Environment config, constants, TTLs
 ├── requirements.txt
 ├── Dockerfile
@@ -289,11 +244,14 @@ mining-profitability/
 │   ├── profitability_engine.py # Core calculation engine
 │   ├── whattomine_service.py   # WhatToMine API client
 │   ├── hashrateno_service.py   # Hashrate.no API + fuzzy matching
-│   ├── miningnow_service.py    # MiningNow scraper (3 strategies)
 │   ├── powerpool_service.py    # PowerPool worker monitoring
+│   ├── alert_service.py        # Telegram/Discord notifications
+│   ├── pdu_service.py          # Smart PDU power control
+│   ├── tou_service.py          # Time-of-use rate schedules
+│   ├── tax_export_service.py   # CSV/PDF tax report generation
 │   ├── coinbase_service.py     # Coinbase CDP wallet API
-│   ├── inventory_manager.py    # JSON-backed miner/location CRUD
-│   ├── history_service.py      # SQLite time-series storage
+│   ├── inventory_manager.py    # Thread-safe JSON CRUD
+│   ├── history_service.py      # SQLite (11 tables) time-series + config
 │   ├── cache_manager.py        # TTL file cache
 │   └── power_import.py         # CSV power data parser
 ├── templates/                  # Jinja2 HTML templates
@@ -303,17 +261,16 @@ mining-profitability/
 │   ├── pools.html              # Pool comparison
 │   ├── optimizer.html          # Power optimizer
 │   ├── difficulty.html         # Difficulty trends
-│   ├── wallet.html             # Coinbase wallet
 │   └── solar.html              # Solar loan analysis
 ├── static/
 │   ├── css/dashboard.css       # Dark theme, CSS variables
 │   └── js/
 │       ├── dashboard.js        # Main state + rendering
+│       ├── alerts.js           # Alert settings UI
 │       ├── analysis-tools.js   # Swap, optimizer, pool logic
 │       ├── charts.js           # Chart.js profit history
 │       ├── inventory-modal.js  # Add/edit miner modals
-│       ├── solar.js            # Solar loan calculations
-│       └── wallet.js           # Wallet display
+│       └── solar.js            # Solar loan calculations
 ├── data/                       # User data (gitignored)
 │   ├── inventory.json          # Miner definitions
 │   ├── locations.json          # Mining locations
@@ -323,23 +280,35 @@ mining-profitability/
 
 ## Background Processes
 
-Two daemon threads run alongside the Flask server:
+Three daemon threads run alongside the Flask server:
 
-- **Uptime Tracker** — polls PowerPool every 5 minutes, records miner online/offline status and hashrate to SQLite
-- **Profit Snapshots** — piggybacks on `/api/profitability` requests, records daily profit per miner (throttled to once per hour)
+- **Uptime Tracker** — polls PowerPool every 5 minutes, records miner online/offline status and hashrate to SQLite, triggers alert checks
+- **Profit Snapshots** — records daily profit per miner (throttled to once per hour)
+- **Auto-Pause Monitor** — checks miner profitability against strike price thresholds, controls smart PDU outlets
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|------------|
 | Backend | Python 3.13, Flask 3.1 |
-| Database | SQLite (WAL mode) for history; JSON files for inventory |
+| Database | SQLite (WAL mode, 11 tables) for history/config; JSON files for inventory |
 | Frontend | Vanilla JS, Chart.js 4.4, CSS3 variables |
 | Auth | bcrypt password hashing, Flask sessions |
-| Scraping | BeautifulSoup 4, requests |
-| Matching | rapidfuzz (fuzzy string matching) |
+| PDF Export | fpdf2 |
+| Matching | rapidfuzz (fuzzy string matching for API model lookup) |
 | Deployment | Docker, Docker Compose |
-| Caching | File-based JSON with TTL per source |
+| Caching | File-based JSON with configurable TTL per source |
+| Alerts | Telegram Bot API, Discord Webhooks |
+
+## Contributing
+
+Contributions welcome. Areas that would be particularly valuable:
+
+- **Additional pool integrations** (ViaBTC, F2Pool, Foundry)
+- **GPU miner support** (temperature/fan monitoring via CGMiner API)
+- **Additional smart plug support** (Shelly, Sonoff, etc.)
+- **Mobile app** (React Native dashboard companion)
+- **Grafana export** (Prometheus metrics endpoint)
 
 ## License
 
