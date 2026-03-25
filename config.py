@@ -86,4 +86,4 @@ DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "")  # blank = auth disable
 # Flask
 FLASK_HOST = os.getenv("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.getenv("FLASK_PORT", "5000"))
-FLASK_DEBUG = os.getenv("FLASK_DEBUG", "true").lower() == "true"
+FLASK_DEBUG = os.getenv("FLASK_DEBUG", "false").lower() == "true"

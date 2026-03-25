@@ -1,6 +1,15 @@
 .env
-data/
+data/inventory.json
+data/locations.json
+data/power_imports.json
+data/solar_loan.json
+data/history.db
+data/*.db
+data/.flask_secret
 cache/
 __pycache__/
 *.pyc
 .git/
+.venv/
+venv/
+deploy-update.sh

@@ -1,4 +1,5 @@
 import json
+import threading
 import uuid
 from pathlib import Path
 
@@ -7,16 +8,21 @@ class InventoryManager:
     def __init__(self, inventory_path: str, locations_path: str):
         self.inventory_path = Path(inventory_path)
         self.locations_path = Path(locations_path)
+        self._lock = threading.Lock()
 
     # --- Inventory ---
 
     def _load_inventory(self) -> dict:
-        with open(self.inventory_path, "r") as f:
-            return json.load(f)
+        with self._lock:
+            if not self.inventory_path.exists():
+                return {"miners": []}
+            with open(self.inventory_path, "r") as f:
+                return json.load(f)
 
     def _save_inventory(self, data: dict) -> None:
-        with open(self.inventory_path, "w") as f:
-            json.dump(data, f, indent=2)
+        with self._lock:
+            with open(self.inventory_path, "w") as f:
+                json.dump(data, f, indent=2)
 
     def get_all_miners(self) -> list[dict]:
         return self._load_inventory()["miners"]
@@ -37,6 +43,9 @@ class InventoryManager:
         miner_data.setdefault("whattomine_coin_id", None)
         miner_data.setdefault("hashrateno_model_key", "")
         miner_data.setdefault("miningnow_model_key", "")
+        miner_data.setdefault("pool_fee_pct", 1.0)
+        miner_data.setdefault("hashrate_unit", "TH/s")
+        miner_data.setdefault("powerpool_worker_key", "")
         data["miners"].append(miner_data)
         self._save_inventory(data)
         return miner_data
@@ -75,12 +84,16 @@ class InventoryManager:
     # --- Locations ---
 
     def _load_locations(self) -> dict:
-        with open(self.locations_path, "r") as f:
-            return json.load(f)
+        with self._lock:
+            if not self.locations_path.exists():
+                return {"locations": []}
+            with open(self.locations_path, "r") as f:
+                return json.load(f)
 
     def _save_locations(self, data: dict) -> None:
-        with open(self.locations_path, "w") as f:
-            json.dump(data, f, indent=2)
+        with self._lock:
+            with open(self.locations_path, "w") as f:
+                json.dump(data, f, indent=2)
 
     def get_all_locations(self) -> list[dict]:
         return self._load_locations()["locations"]

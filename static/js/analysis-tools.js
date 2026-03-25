@@ -54,8 +54,9 @@ function initPriceSlider() {
     slider.addEventListener('input', () => {
         const val = parseInt(slider.value);
         priceMultiplier = val / 100;
-        label.textContent = (val >= 0 ? '+' : '') + (val) + '%';
-        label.className = 'slider-value ' + (val > 0 ? 'profit-positive' : val < 0 ? 'profit-negative' : '');
+        var pct = val - 100;
+        label.textContent = (pct >= 0 ? '+' : '') + pct + '%';
+        label.className = 'slider-value ' + (pct > 0 ? 'profit-positive' : pct < 0 ? 'profit-negative' : '');
         applyPriceScenario();
     });
 }

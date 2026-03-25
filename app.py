@@ -201,14 +201,27 @@ def add_miner():
         errors.append("model is required")
     if not data.get("algorithm", "").strip():
         errors.append("algorithm is required")
-    hashrate = data.get("hashrate")
-    if hashrate is None or (isinstance(hashrate, (int, float)) and hashrate <= 0):
-        errors.append("hashrate must be a positive number")
-    wattage = data.get("wattage")
-    if wattage is None or (isinstance(wattage, (int, float)) and wattage <= 0):
-        errors.append("wattage must be a positive number")
-    if data.get("purchase_price") is not None and float(data.get("purchase_price", 0)) < 0:
-        errors.append("purchase_price cannot be negative")
+    try:
+        hashrate = float(data.get("hashrate", 0))
+        if hashrate <= 0:
+            errors.append("hashrate must be a positive number")
+        data["hashrate"] = hashrate
+    except (ValueError, TypeError):
+        errors.append("hashrate must be a valid number")
+    try:
+        wattage = float(data.get("wattage", 0))
+        if wattage <= 0:
+            errors.append("wattage must be a positive number")
+        data["wattage"] = wattage
+    except (ValueError, TypeError):
+        errors.append("wattage must be a valid number")
+    try:
+        pp = float(data.get("purchase_price", 0) or 0)
+        if pp < 0:
+            errors.append("purchase_price cannot be negative")
+        data["purchase_price"] = pp
+    except (ValueError, TypeError):
+        errors.append("purchase_price must be a valid number")
     if errors:
         return jsonify({"error": "Validation failed", "details": errors}), 400
     miner = inventory_mgr.add_miner(data)
