@@ -141,13 +141,30 @@ class WhatToMineService:
             ref = self.get_coin_reference_data(coin_id)
             if ref and "revenue" in ref:
                 ref_revenue = _parse_dollar(ref.get("revenue"))
-                # Fallback: if revenue rounds to $0.00 at 1 unit, compute from rewards × exchange rate
+                # Fallback: if revenue rounds to $0.00 at 1 unit, compute from
+                # btc_revenue × BTC price (exchange_rate is in BTC, not USD)
                 if ref_revenue == 0:
                     try:
-                        ref_rewards = float(ref.get("estimated_rewards", 0) or 0)
-                        exchange_rate = float(ref.get("exchange_rate", 0) or 0)
-                        ref_revenue = ref_rewards * exchange_rate
-                    except (ValueError, TypeError):
+                        btc_rev = float(ref.get("btc_revenue", 0) or 0)
+                        if btc_rev > 0 and ref.get("exchange_rate_vol"):
+                            # exchange_rate_vol is the coin's USD volume/price indicator
+                            # Use estimated_rewards × (exchange_rate_vol / block_reward) as rough USD
+                            pass
+                        # Most reliable: btc_revenue × current BTC price
+                        # WTM doesn't give BTC price directly, so derive from market_cap or use
+                        # the revenue string parsing on a higher hashrate request
+                        # For now, estimate: revenue ≈ btc_revenue × 70000 (approx BTC/USD)
+                        if btc_rev > 0:
+                            # Try to get BTC price from BTC coin data (coin_id=1)
+                            btc_data = self.get_coin_reference_data(1)
+                            btc_price = 70000  # fallback
+                            if btc_data:
+                                btc_rev_str = _parse_dollar(btc_data.get("revenue"))
+                                btc_btc_rev = float(btc_data.get("btc_revenue", 0) or 0)
+                                if btc_btc_rev > 0:
+                                    btc_price = btc_rev_str / btc_btc_rev
+                            ref_revenue = btc_rev * btc_price
+                    except (ValueError, TypeError, ZeroDivisionError):
                         pass
                 daily_revenue = ref_revenue * hashrate
                 daily_electricity = (wattage * 24 / 1000) * elec_cost
