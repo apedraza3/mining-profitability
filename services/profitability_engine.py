@@ -344,16 +344,21 @@ class ProfitabilityEngine:
             "net_profit": round(daily_revenue - pool_fee_daily - daily_electricity, 4),
         }
 
+        # Hosting fee (monthly, spread daily)
+        hosting_fee_monthly = location.get("hosting_fee_monthly", 0) or 0
+        hosting_fee_daily = hosting_fee_monthly / 30 if hosting_fee_monthly > 0 else 0
+
         # Solar-adjusted electricity cost
         si = solar_info or {}
         solar_offset_pct = si.get("solar_offset_pct", 0)
+        net_revenue = daily_revenue - pool_fee_daily
         if solar_offset_pct > 0:
             solar_elec = round(daily_electricity * (1 - solar_offset_pct), 2)
-            solar_profit = round(daily_revenue - solar_elec, 2)
+            solar_profit = round(net_revenue - solar_elec - hosting_fee_daily, 2)
             solar_savings = round(daily_electricity - solar_elec, 2)
         else:
             solar_elec = None
-            solar_profit = None
+            solar_profit = round(net_revenue - daily_electricity - hosting_fee_daily, 2)
             solar_savings = None
 
         return {
@@ -747,13 +752,25 @@ class ProfitabilityEngine:
         unprofitable_count = sum(1 for r in active if r["status"] == "unprofitable")
         marginal_count = sum(1 for r in active if r["status"] == "marginal")
 
-        # Solar-adjusted totals
+        # Pool fees
+        total_pool_fees = sum(
+            r["waterfall"]["pool_fee"] * r["miner"].get("quantity", 1)
+            for r in active
+        )
+
+        # Hosting fees
+        total_hosting_fees = sum(
+            (r["location"].get("hosting_fee_monthly", 0) or 0) / 30 * r["miner"].get("quantity", 1)
+            for r in active
+        )
+
+        # Solar-adjusted totals (includes pool fees and hosting)
         total_solar_savings = sum(
             (r["solar"].get("daily_savings") or 0) * r["miner"].get("quantity", 1)
             for r in active
         )
         total_solar_elec = total_daily_elec - total_solar_savings
-        total_solar_profit = total_daily_revenue - total_solar_elec
+        total_solar_profit = total_daily_revenue - total_solar_elec - total_pool_fees - total_hosting_fees
 
         # By location
         by_location = {}
