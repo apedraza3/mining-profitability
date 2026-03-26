@@ -444,9 +444,37 @@ class ProfitabilityEngine:
                 crypto_w = (solar_data or {}).get("crypto_mining_w", 0)
 
                 if actual_solar_kwh > 0 and actual_consumption_kwh > 0:
-                    # Use actual accumulated data — crypto's share of solar
-                    crypto_share = min(actual_crypto_kwh / actual_consumption_kwh, 1.0)
-                    crypto_solar_kwh = min(actual_solar_kwh, actual_consumption_kwh) * crypto_share
+                    # Today's summary is partial (only covers hours so far today).
+                    # To get a full-day estimate, use historical daily average from
+                    # monthly costs endpoint, falling back to today's partial data
+                    # projected to 24 hours.
+                    avg_daily_solar = 0
+                    mc = monthly_costs or {}
+                    mc_days = mc.get("days", 0) or 0
+                    mc_solar_kwh = mc.get("total_solar_kwh", 0) or 0
+                    if mc_days > 0 and mc_solar_kwh > 0:
+                        # Best source: actual historical average over multiple days
+                        avg_daily_solar = mc_solar_kwh / mc_days
+                        avg_daily_consumption = (mc.get("total_consumption_kwh", 0) or 0) / mc_days
+                        avg_daily_crypto = (mc.get("total_crypto_kwh", 0) or 0) / mc_days
+                    else:
+                        # Fallback: project today's partial data to full day
+                        from datetime import datetime, timezone
+                        now = datetime.now(timezone.utc)
+                        hours_elapsed = now.hour + now.minute / 60
+                        if hours_elapsed > 1:
+                            scale = 24 / hours_elapsed
+                        else:
+                            scale = 1
+                        avg_daily_solar = actual_solar_kwh * scale
+                        avg_daily_consumption = actual_consumption_kwh * scale
+                        avg_daily_crypto = actual_crypto_kwh * scale
+
+                    if avg_daily_consumption > 0:
+                        crypto_share = min(avg_daily_crypto / avg_daily_consumption, 1.0)
+                    else:
+                        crypto_share = min(actual_crypto_kwh / actual_consumption_kwh, 1.0)
+                    crypto_solar_kwh = min(avg_daily_solar, avg_daily_consumption) * crypto_share
                     loc["solar_daily_kwh"] = crypto_solar_kwh
                     loc["_live_solar"] = {
                         "solar_w": solar_w,
