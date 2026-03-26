@@ -690,6 +690,10 @@ function getActualProfit(r) {
     if (ratedHashBase <= 0) return null;
 
     var ratio = poolHashBase / ratedHashBase;
+    // If pool hashrate is below 50% of rated, miner is likely off or shutting down
+    // — don't show misleading actual profit against full-day electricity
+    if (ratio < 0.50) return 'offline';
+
     var grossRevenue = (r.daily_revenue || 0) * ratio;
     // Deduct pool fee
     var poolFeePct = (r.miner.pool_fee_pct || 0) / 100;
