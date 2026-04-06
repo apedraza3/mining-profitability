@@ -144,11 +144,12 @@ class TOUService:
         # Current hour not covered by any period — return None to use flat rate
         return None
 
-    def get_weighted_daily_rate(self, location_id: str) -> float | None:
+    def get_weighted_daily_rate(self, location_id: str, flat_rate: float = 0.0) -> float | None:
         """Calculate the 24-hour weighted average $/kWh across all TOU periods.
 
         Returns None if no TOU schedule exists.
         Uses the current day of week for rate selection.
+        For hours not covered by any TOU period, flat_rate is used.
         """
         schedules = self.get_schedules(location_id)
         if not schedules:
@@ -185,14 +186,10 @@ class TOUService:
         if not hour_rates:
             return None
 
-        # For hours not covered, the caller's flat rate will apply,
-        # but for weighted average we only count covered hours
-        total_rate = sum(hour_rates.values())
+        # Blend TOU-covered hours with flat rate for uncovered hours
+        covered_total = sum(hour_rates.values())
         covered_hours = len(hour_rates)
-
-        if covered_hours < 24:
-            # Return the average of covered hours only
-            # The caller should blend this with flat rate for uncovered hours
-            return round(total_rate / covered_hours, 6)
+        uncovered_hours = 24 - covered_hours
+        total_rate = covered_total + (uncovered_hours * flat_rate)
 
         return round(total_rate / 24, 6)

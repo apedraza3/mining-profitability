@@ -1,8 +1,11 @@
 import json
 import logging
 import math
+import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+import requests as _requests
 
 from services.whattomine_service import WhatToMineService
 from services.hashrateno_service import HashrateNoService
@@ -21,10 +24,14 @@ class ProfitabilityEngine:
         whattomine: WhatToMineService,
         hashrateno: HashrateNoService,
         inventory_mgr: InventoryManager,
+        history_svc=None,
+        tou_svc=None,
     ):
         self.whattomine = whattomine
         self.hashrateno = hashrateno
         self.inventory = inventory_mgr
+        self.history_svc = history_svc
+        self.tou_svc = tou_svc
         self.coin_mappings = self._load_coin_mappings()
         self._calc_cache = None
         self._calc_cache_time = 0
@@ -363,30 +370,28 @@ class ProfitabilityEngine:
 
     def _fetch_electricity_data(self) -> dict | None:
         """Fetch live solar + settings + bill estimate + daily summary from electricity dashboard."""
-        import os
         try:
-            import requests
             api = os.getenv("ELECTRICITY_API_URL", "http://127.0.0.1:5001")
             realtime = None
             settings = None
             bill_estimate = None
             daily_summary = None
-            resp = requests.get(f"{api}/api/realtime", timeout=3)
+            resp = _requests.get(f"{api}/api/realtime", timeout=3)
             if resp.ok:
                 data = resp.json()
                 if data.get("status") == "ok":
                     realtime = data
-            resp2 = requests.get(f"{api}/api/settings", timeout=3)
+            resp2 = _requests.get(f"{api}/api/settings", timeout=3)
             if resp2.ok:
                 settings = resp2.json()
-            resp3 = requests.get(f"{api}/api/bill-estimate", timeout=3)
+            resp3 = _requests.get(f"{api}/api/bill-estimate", timeout=3)
             if resp3.ok:
                 bill_estimate = resp3.json()
-            resp4 = requests.get(f"{api}/api/summary", timeout=3)
+            resp4 = _requests.get(f"{api}/api/summary", timeout=3)
             if resp4.ok:
                 daily_summary = resp4.json()
             monthly_costs = None
-            resp5 = requests.get(f"{api}/api/costs?period=month", timeout=3)
+            resp5 = _requests.get(f"{api}/api/costs?period=month", timeout=3)
             if resp5.ok:
                 monthly_costs = resp5.json()
             return {
@@ -459,7 +464,6 @@ class ProfitabilityEngine:
                         avg_daily_crypto = (mc.get("total_crypto_kwh", 0) or 0) / mc_days
                     else:
                         # Fallback: project today's partial data to full day
-                        from datetime import datetime, timezone
                         now = datetime.now(timezone.utc)
                         hours_elapsed = now.hour + now.minute / 60
                         if hours_elapsed > 1:
@@ -699,22 +703,19 @@ class ProfitabilityEngine:
             }
 
         # Fetch uptime data if available (for electricity cost adjustment)
-        from services.history_service import HistoryService
         try:
-            uptime_svc = HistoryService()
-            uptime_stats = uptime_svc.get_uptime_stats(days=7)
+            uptime_stats = self.history_svc.get_uptime_stats(days=7) if self.history_svc else {}
         except Exception:
             uptime_stats = {}
 
         # Check TOU schedules — override flat rate with weighted daily average
         try:
-            from services.tou_service import TOUService
-            tou_svc = TOUService(HistoryService())
             for loc_id, loc in locations.items():
-                weighted = tou_svc.get_weighted_daily_rate(loc_id)
+                flat_rate = loc.get("electricity_cost_kwh", 0.10)
+                weighted = self.tou_svc.get_weighted_daily_rate(loc_id, flat_rate=flat_rate)
                 if weighted is not None:
                     loc["_tou_weighted_rate"] = weighted
-                    loc["_flat_rate"] = loc.get("electricity_cost_kwh", 0.10)
+                    loc["_flat_rate"] = flat_rate
                     loc["electricity_cost_kwh"] = weighted
                     logger.debug(
                         "TOU override for %s: flat $%.4f → weighted $%.4f/kWh",
@@ -814,11 +815,9 @@ class ProfitabilityEngine:
         actual_peak_kw = bill_estimate.get("peak_demand_kw", 0)
         home_demand = {}
 
-        if demand_rate > 0 and actual_peak_kw > 0:
+        if demand_rate > 0 and actual_peak_kw > 0 and self.history_svc:
             # Store highest peak — only goes up, never down within a billing month
-            from services.history_service import HistoryService
-            peak_svc = HistoryService()
-            total_home_kw = peak_svc.update_peak_demand(actual_peak_kw)
+            total_home_kw = self.history_svc.update_peak_demand(actual_peak_kw)
             total_home_demand_charge = round(total_home_kw * demand_rate, 2)
         elif demand_rate > 0:
             # Fallback: sum miner rated wattages if electricity dashboard unavailable

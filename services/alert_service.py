@@ -1,7 +1,7 @@
 """Telegram / Discord alert service for mining events."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests
 
@@ -51,7 +51,7 @@ class AlertService:
         embed = {
             "description": message,
             "color": color,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         if title:
             embed["title"] = title
@@ -151,6 +151,19 @@ class AlertService:
                 )
                 self.send_alert("offline", msg, miner_id=miner_id)
 
+    @staticmethod
+    def _normalize_hashrate(value, unit):
+        """Normalize hashrate to H/s for comparison."""
+        multipliers = {
+            "H/s": 1, "Sol/s": 1,
+            "KH/s": 1e3, "KSol/s": 1e3,
+            "MH/s": 1e6,
+            "GH/s": 1e9,
+            "TH/s": 1e12,
+            "PH/s": 1e15,
+        }
+        return value * multipliers.get(unit, 1)
+
     def check_hashrate_drop(self, pool_statuses, miners):
         """Alert when current hashrate drops below configured % of rated hashrate."""
         self.reload_configs()
@@ -174,15 +187,22 @@ class AlertService:
             if rated_hr <= 0 or current_hr <= 0:
                 continue
 
-            # Normalize units if they match
-            drop_pct = ((rated_hr - current_hr) / rated_hr) * 100
+            # Normalize both to H/s for accurate comparison
+            pool_unit = status.get("hashrate_units", "") or status.get("hashrate_avg_units", "")
+            miner_unit = miner.get("hashrate_unit", "")
+            current_normalized = self._normalize_hashrate(current_hr, pool_unit)
+            rated_normalized = self._normalize_hashrate(rated_hr, miner_unit)
+
+            if rated_normalized <= 0:
+                continue
+
+            drop_pct = ((rated_normalized - current_normalized) / rated_normalized) * 100
             if drop_pct >= threshold_pct:
-                hr_unit = miner.get("hashrate_unit", "")
                 msg = (
                     f"\u26a0\ufe0f <b>Hashrate Drop</b>\n"
                     f"<b>{miner.get('name', miner_id)}</b>: "
-                    f"{current_hr:.1f} {hr_unit} "
-                    f"(rated {rated_hr:.1f} {hr_unit})\n"
+                    f"{current_hr:.1f} {pool_unit} "
+                    f"(rated {rated_hr:.1f} {miner_unit})\n"
                     f"Drop: <b>{drop_pct:.1f}%</b> (threshold: {threshold_pct}%)"
                 )
                 self.send_alert("hashrate_drop", msg, miner_id=miner_id)

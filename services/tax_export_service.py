@@ -13,7 +13,8 @@ class TaxExportService:
         self.history_svc = history_svc
 
     def _query_data(self, start_date: str, end_date: str) -> list[dict]:
-        """Query profit_snapshots grouped by date and miner for a date range."""
+        """Query profit_snapshots grouped by date and miner for a date range.
+        Uses AVG to collapse multiple snapshots per day into one daily figure."""
         conn = self.history_svc._get_conn()
         rows = conn.execute(
             """SELECT
@@ -24,7 +25,8 @@ class TaxExportService:
                 best_coin,
                 AVG(daily_revenue) as avg_revenue,
                 AVG(daily_electricity) as avg_electricity,
-                AVG(daily_profit) as avg_profit
+                AVG(daily_profit) as avg_profit,
+                COUNT(*) as snapshots_in_day
                FROM profit_snapshots
                WHERE DATE(timestamp) >= ? AND DATE(timestamp) <= ?
                GROUP BY DATE(timestamp), miner_id

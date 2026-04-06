@@ -77,14 +77,15 @@ inventory_mgr = InventoryManager(
 whattomine_svc = WhatToMineService(wtm_cache)
 hashrateno_svc = HashrateNoService(config.HASHRATE_NO_API_KEY, hrn_cache)
 powerpool_svc = PowerPoolService(config.POWERPOOL_OBSERVER_KEY, pp_cache)
-engine = ProfitabilityEngine(
-    whattomine_svc, hashrateno_svc, inventory_mgr
-)
 history_svc = HistoryService()
+tou_svc = TOUService(history_svc)
+engine = ProfitabilityEngine(
+    whattomine_svc, hashrateno_svc, inventory_mgr,
+    history_svc=history_svc, tou_svc=tou_svc,
+)
 alert_svc = AlertService(history_svc)
 pdu_svc = PDUService(history_svc)
 tax_export_svc = TaxExportService(history_svc)
-tou_svc = TOUService(history_svc)
 cb_cache = CacheManager(str(config.CACHE_DIR / "coinbase"))
 coinbase_svc = CoinbaseService(
     config.COINBASE_API_KEY_NAME, config.COINBASE_API_PRIVATE_KEY, cb_cache
@@ -97,6 +98,7 @@ def _uptime_tracker():
     """Background thread: logs PowerPool worker uptime every 5 minutes,
     and runs alert checks after each poll cycle."""
     _time.sleep(30)  # Wait for app to start
+    _cleanup_counter = 0
     while True:
         try:
             miners = inventory_mgr.get_all_miners()
@@ -110,15 +112,28 @@ def _uptime_tracker():
                 if statuses:
                     alert_svc.check_miner_offline(statuses, miners)
                     alert_svc.check_hashrate_drop(statuses, miners)
-                # Check negative profit from latest profitability data
-                prof_data = engine.calculate_all()
-                miner_results = prof_data.get("miners", [])
-                if miner_results:
-                    alert_svc.check_negative_profit(miner_results)
+                # Only check negative profit if cached data is fresh
+                # (don't trigger new WhatToMine API calls from background)
+                if engine._calc_cache and (
+                    _time.time() - engine._calc_cache_time
+                ) < 600:
+                    miner_results = engine._calc_cache.get("miners", [])
+                    if miner_results:
+                        alert_svc.check_negative_profit(miner_results)
             except Exception as ae:
                 logger.error("Alert check error: %s", ae)
         except Exception as e:
             logger.error("Uptime tracker error: %s", e)
+
+        # Run DB cleanup once per day (~288 cycles of 5 min)
+        _cleanup_counter += 1
+        if _cleanup_counter >= 288:
+            _cleanup_counter = 0
+            try:
+                history_svc.cleanup_old_data()
+            except Exception as e:
+                logger.error("DB cleanup error: %s", e)
+
         _time.sleep(300)  # 5 minutes
 
 
@@ -128,21 +143,37 @@ _tracker_thread.start()
 
 # ---- Auth routes ----
 
+_login_attempts = {}  # IP -> (count, first_attempt_time)
+_LOGIN_RATE_WINDOW = 300  # 5 minutes
+_LOGIN_RATE_MAX = 10  # max attempts per window
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if not _auth_enabled():
         return redirect("/")
     error = None
     if request.method == "POST":
+        ip = request.remote_addr or "unknown"
+        now = _time.time()
+        count, first_time = _login_attempts.get(ip, (0, now))
+        if now - first_time > _LOGIN_RATE_WINDOW:
+            count, first_time = 0, now
+        if count >= _LOGIN_RATE_MAX:
+            error = "Too many login attempts. Please wait a few minutes."
+            return render_template("login.html", error=error)
+
         username = request.form.get("username", "")
         password = request.form.get("password", "")
         if (
             username == config.DASHBOARD_USERNAME
             and bcrypt.checkpw(password.encode("utf-8"), _password_hash)
         ):
+            _login_attempts.pop(ip, None)
             session["authenticated"] = True
             next_url = request.args.get("next", "/")
             return redirect(next_url)
+        _login_attempts[ip] = (count + 1, first_time)
         error = "Invalid username or password."
     return render_template("login.html", error=error)
 
@@ -207,41 +238,50 @@ def list_miners():
     return jsonify(inventory_mgr.get_all_miners())
 
 
+def _validate_miner_data(data, require_all=False):
+    """Validate miner fields. require_all=True for creation, False for updates."""
+    errors = []
+    if require_all:
+        if not data.get("name", "").strip():
+            errors.append("name is required")
+        if not data.get("model", "").strip():
+            errors.append("model is required")
+        if not data.get("algorithm", "").strip():
+            errors.append("algorithm is required")
+    if "hashrate" in data or require_all:
+        try:
+            hashrate = float(data.get("hashrate", 0))
+            if hashrate <= 0:
+                errors.append("hashrate must be a positive number")
+            data["hashrate"] = hashrate
+        except (ValueError, TypeError):
+            errors.append("hashrate must be a valid number")
+    if "wattage" in data or require_all:
+        try:
+            wattage = float(data.get("wattage", 0))
+            if wattage <= 0:
+                errors.append("wattage must be a positive number")
+            data["wattage"] = wattage
+        except (ValueError, TypeError):
+            errors.append("wattage must be a valid number")
+    if "purchase_price" in data or require_all:
+        try:
+            pp = float(data.get("purchase_price", 0) or 0)
+            if pp < 0:
+                errors.append("purchase_price cannot be negative")
+            data["purchase_price"] = pp
+        except (ValueError, TypeError):
+            errors.append("purchase_price must be a valid number")
+    return errors
+
+
 @app.route("/api/miners", methods=["POST"])
 @login_required
 def add_miner():
     data = request.get_json()
     if not data:
         return jsonify({"error": "No data provided"}), 400
-    # Validate required fields
-    errors = []
-    if not data.get("name", "").strip():
-        errors.append("name is required")
-    if not data.get("model", "").strip():
-        errors.append("model is required")
-    if not data.get("algorithm", "").strip():
-        errors.append("algorithm is required")
-    try:
-        hashrate = float(data.get("hashrate", 0))
-        if hashrate <= 0:
-            errors.append("hashrate must be a positive number")
-        data["hashrate"] = hashrate
-    except (ValueError, TypeError):
-        errors.append("hashrate must be a valid number")
-    try:
-        wattage = float(data.get("wattage", 0))
-        if wattage <= 0:
-            errors.append("wattage must be a positive number")
-        data["wattage"] = wattage
-    except (ValueError, TypeError):
-        errors.append("wattage must be a valid number")
-    try:
-        pp = float(data.get("purchase_price", 0) or 0)
-        if pp < 0:
-            errors.append("purchase_price cannot be negative")
-        data["purchase_price"] = pp
-    except (ValueError, TypeError):
-        errors.append("purchase_price must be a valid number")
+    errors = _validate_miner_data(data, require_all=True)
     if errors:
         return jsonify({"error": "Validation failed", "details": errors}), 400
     miner = inventory_mgr.add_miner(data)
@@ -255,6 +295,9 @@ def update_miner(miner_id):
     data = request.get_json()
     if not data:
         return jsonify({"error": "No data provided"}), 400
+    errors = _validate_miner_data(data, require_all=False)
+    if errors:
+        return jsonify({"error": "Validation failed", "details": errors}), 400
     miner = inventory_mgr.update_miner(miner_id, data)
     if miner is None:
         return jsonify({"error": "Miner not found"}), 404
@@ -298,10 +341,16 @@ def add_location():
     if not data.get("name", "").strip():
         errors.append("name is required")
     elec_cost = data.get("electricity_cost_kwh")
-    if elec_cost is not None and float(elec_cost) < 0:
-        errors.append("electricity_cost_kwh cannot be negative")
     if elec_cost is None:
         errors.append("electricity_cost_kwh is required")
+    else:
+        try:
+            elec_cost = float(elec_cost)
+            if elec_cost < 0:
+                errors.append("electricity_cost_kwh cannot be negative")
+            data["electricity_cost_kwh"] = elec_cost
+        except (ValueError, TypeError):
+            errors.append("electricity_cost_kwh must be a valid number")
     if errors:
         return jsonify({"error": "Validation failed", "details": errors}), 400
     loc = inventory_mgr.add_location(data)
@@ -799,7 +848,8 @@ def power_optimize():
                 "miner_id": m.get("id", ""),
             })
 
-    # Greedy: sort by profit per watt descending, pack into budget
+    # Sort by profit per watt descending, greedily pack into budget
+    # (heuristic — may not be globally optimal for all combinations)
     candidates.sort(key=lambda c: c["profit_per_kw"], reverse=True)
 
     selected = []
@@ -889,8 +939,8 @@ def difficulty_history():
                     blocks_remaining = next_halving_block - current_height
                     est_seconds = blocks_remaining * halving_info["block_interval_seconds"]
                     est_days = est_seconds / 86400
-                    from datetime import datetime, timedelta
-                    est_date = (datetime.utcnow() + timedelta(seconds=est_seconds)).strftime("%Y-%m-%d")
+                    from datetime import datetime, timedelta, timezone
+                    est_date = (datetime.now(timezone.utc) + timedelta(seconds=est_seconds)).strftime("%Y-%m-%d")
                     results["halving"] = {
                         "current_block": current_height,
                         "next_halving_block": next_halving_block,
@@ -924,8 +974,8 @@ def difficulty_history():
                     blocks_remaining = next_halving_block - current_height
                     est_seconds = blocks_remaining * halving_info["block_interval_seconds"]
                     est_days = est_seconds / 86400
-                    from datetime import datetime, timedelta
-                    est_date = (datetime.utcnow() + timedelta(seconds=est_seconds)).strftime("%Y-%m-%d")
+                    from datetime import datetime, timedelta, timezone
+                    est_date = (datetime.now(timezone.utc) + timedelta(seconds=est_seconds)).strftime("%Y-%m-%d")
                     results["halving"] = {
                         "current_block": current_height,
                         "next_halving_block": next_halving_block,
@@ -955,8 +1005,8 @@ def difficulty_history():
                     blocks_remaining = next_halving_block - current_height
                     est_seconds = blocks_remaining * halving_info["block_interval_seconds"]
                     est_days = est_seconds / 86400
-                    from datetime import datetime, timedelta
-                    est_date = (datetime.utcnow() + timedelta(seconds=est_seconds)).strftime("%Y-%m-%d")
+                    from datetime import datetime, timedelta, timezone
+                    est_date = (datetime.now(timezone.utc) + timedelta(seconds=est_seconds)).strftime("%Y-%m-%d")
                     results["halving"] = {
                         "current_block": current_height,
                         "next_halving_block": next_halving_block,

@@ -106,29 +106,8 @@ class HistoryService:
                 channel TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS auto_pause_config (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                miner_id TEXT NOT NULL UNIQUE,
-                enabled INTEGER NOT NULL DEFAULT 0,
-                pdu_host TEXT,
-                pdu_outlet INTEGER,
-                pdu_type TEXT DEFAULT 'tasmota',
-                negative_minutes_threshold INTEGER DEFAULT 60,
-                resume_profit_threshold REAL DEFAULT 0.50,
-                currently_paused INTEGER DEFAULT 0,
-                last_pause_at TEXT,
-                last_resume_at TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS tou_schedules (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                location_id TEXT NOT NULL,
-                period_name TEXT NOT NULL,
-                rate_per_kwh REAL NOT NULL,
-                start_hour INTEGER NOT NULL,
-                end_hour INTEGER NOT NULL,
-                days_of_week TEXT DEFAULT '0,1,2,3,4,5,6'
-            );
+            -- auto_pause_config is owned by pdu_service.py
+            -- tou_schedules is owned by tou_service.py
         """)
         conn.commit()
         conn.close()

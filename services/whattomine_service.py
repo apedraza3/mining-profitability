@@ -37,6 +37,8 @@ class WhatToMineService:
         self.base_url = config.WHATTOMINE_BASE_URL
         self.ttl = config.WHATTOMINE_CACHE_TTL
         self._last_request_time = 0
+        self._btc_price_cache = None
+        self._btc_price_time = 0
 
     _HEADERS = {
         "User-Agent": (
@@ -65,13 +67,44 @@ class WhatToMineService:
                     logger.warning("WhatToMine 403 (rate limit), waiting %.1fs...", wait)
                     time.sleep(wait)
                     continue
+                if resp.status_code >= 500:
+                    wait = config.WHATTOMINE_REQUEST_DELAY * (attempt + 1)
+                    logger.warning("WhatToMine %d, retrying in %.1fs...", resp.status_code, wait)
+                    time.sleep(wait)
+                    continue
                 resp.raise_for_status()
                 return resp.json()
+            except (requests.Timeout, requests.ConnectionError) as e:
+                wait = config.WHATTOMINE_REQUEST_DELAY * (attempt + 1)
+                logger.warning("WhatToMine transient error (attempt %d/3): %s, retrying in %.1fs...", attempt + 1, e, wait)
+                time.sleep(wait)
+                continue
             except requests.RequestException as e:
                 logger.error("WhatToMine request failed: %s", e)
                 return None
-        logger.error("WhatToMine 403 persisted after retries: %s", url)
+        logger.error("WhatToMine requests failed after 3 retries: %s", url)
         return None
+
+    def _get_btc_price(self) -> float:
+        """Fetch current BTC/USD price from CoinGecko (cached 10 min)."""
+        if self._btc_price_cache and (time.time() - self._btc_price_time) < 600:
+            return self._btc_price_cache
+        try:
+            resp = requests.get(
+                "https://api.coingecko.com/api/v3/simple/price",
+                params={"ids": "bitcoin", "vs_currencies": "usd"},
+                timeout=10,
+            )
+            if resp.ok:
+                price = resp.json().get("bitcoin", {}).get("usd")
+                if price and price > 0:
+                    self._btc_price_cache = float(price)
+                    self._btc_price_time = time.time()
+                    return self._btc_price_cache
+        except requests.RequestException as e:
+            logger.debug("CoinGecko BTC price fetch failed: %s", e)
+        # Return cached value if available, otherwise a rough fallback
+        return self._btc_price_cache or 85000
 
     def get_coins_index(self) -> dict | None:
         """Fetch the full GPU-mineable coins list."""
@@ -150,19 +183,18 @@ class WhatToMineService:
                             # exchange_rate_vol is the coin's USD volume/price indicator
                             # Use estimated_rewards × (exchange_rate_vol / block_reward) as rough USD
                             pass
-                        # Most reliable: btc_revenue × current BTC price
-                        # WTM doesn't give BTC price directly, so derive from market_cap or use
-                        # the revenue string parsing on a higher hashrate request
-                        # For now, estimate: revenue ≈ btc_revenue × 70000 (approx BTC/USD)
                         if btc_rev > 0:
-                            # Try to get BTC price from BTC coin data (coin_id=1)
+                            # Try to derive BTC price from BTC coin data first
                             btc_data = self.get_coin_reference_data(1)
-                            btc_price = 70000  # fallback
+                            btc_price = None
                             if btc_data:
                                 btc_rev_str = _parse_dollar(btc_data.get("revenue"))
                                 btc_btc_rev = float(btc_data.get("btc_revenue", 0) or 0)
                                 if btc_btc_rev > 0:
                                     btc_price = btc_rev_str / btc_btc_rev
+                            # Fall back to live CoinGecko price
+                            if not btc_price or btc_price <= 0:
+                                btc_price = self._get_btc_price()
                             ref_revenue = btc_rev * btc_price
                     except (ValueError, TypeError, ZeroDivisionError):
                         pass
