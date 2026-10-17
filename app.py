@@ -1040,19 +1040,20 @@ def solar_mining_summary():
         summary = req.get(f"{ELECTRICITY_API}/api/summary", timeout=5).json()
         roi = req.get(f"{ELECTRICITY_API}/api/solar/roi", timeout=5).json()
 
-        # Realtime values (for live display)
-        solar_w = rt.get("solar_production_w", 0)
-        crypto_w = rt.get("crypto_mining_w", 0)
-        consumption_w = rt.get("house_consumption_w", 0)
-        net_grid_w = rt.get("net_grid_w", 0)
+        # Realtime values (for live display). None = that source is down.
+        solar_w = rt.get("solar_production_w") or 0
+        crypto_w = rt.get("crypto_mining_w") or 0
+        consumption_w = rt.get("house_consumption_w") or 0
+        net_grid_w = rt.get("net_grid_w") or 0
 
-        energy_rate = summary.get("energy_rate", 0.08907)
+        # Marginal energy rate (energy + WPCA + taxes) from the dashboard; demand excluded
+        energy_rate = summary.get("marginal_energy_rate") or summary.get("energy_rate", 0.08907)
 
         # Use actual daily accumulated kWh from electricity dashboard
         # (much more accurate than instantaneous watts × 24)
-        actual_solar_kwh = summary.get("solar_kwh", 0)
-        actual_consumption_kwh = summary.get("consumption_kwh", 0)
-        actual_crypto_kwh = summary.get("crypto_kwh", 0)
+        actual_solar_kwh = summary.get("solar_kwh") or 0
+        actual_consumption_kwh = summary.get("consumption_kwh") or 0
+        actual_crypto_kwh = summary.get("crypto_kwh") or 0
 
         if actual_consumption_kwh > 0 and actual_solar_kwh > 0:
             # Crypto's proportional share of today's actual solar production
@@ -1079,6 +1080,10 @@ def solar_mining_summary():
 
         return jsonify({
             "connected": True,
+            "sources_ok": {
+                "pvs6": rt.get("pvs6_ok", True),
+                "emporia": rt.get("emporia_ok", True),
+            },
             "realtime": {
                 "solar_w": round(solar_w, 0),
                 "crypto_w": round(crypto_w, 0),
@@ -1171,7 +1176,7 @@ def solar_loan_analysis():
         costs_resp = req.get(f"{ELECTRICITY_API}/api/costs?period=month", timeout=5).json()
         elec_connected = True
 
-        energy_rate = summary.get("energy_rate", 0.08907)
+        energy_rate = summary.get("marginal_energy_rate") or summary.get("energy_rate", 0.08907)
         solar_roi = roi_resp
         solar_savings_daily = summary.get("solar_savings", 0) or 0
         solar_production_kwh_today = summary.get("solar_kwh", 0) or 0
@@ -1184,34 +1189,20 @@ def solar_loan_analysis():
             monthly_solar_savings = solar_savings_daily * 30
 
         daily_summary = {
-            "solar_w": rt.get("solar_production_w", 0),
-            "consumption_w": rt.get("house_consumption_w", 0),
-            "crypto_w": rt.get("crypto_mining_w", 0),
-            "net_grid_w": rt.get("net_grid_w", 0),
+            "solar_w": rt.get("solar_production_w") or 0,
+            "consumption_w": rt.get("house_consumption_w") or 0,
+            "crypto_w": rt.get("crypto_mining_w") or 0,
+            "net_grid_w": rt.get("net_grid_w") or 0,
         }
     except Exception as e:
         logger.debug("Solar loan: electricity dashboard unavailable: %s", e)
         monthly_solar_savings = 0
 
-    # Also pull demand charge savings estimate from profitability engine
+    # The dashboard's solar savings already include an hourly demand-charge share
+    # (see electricity-dashboard Calculator.compute_hourly_aggregation). Adding a
+    # second estimate here double-counted it, and that estimate came from the
+    # instantaneous solar/consumption ratio, so it swung with the time of day.
     demand_savings_monthly = 0
-    try:
-        prof_data = engine.calculate_all()
-        summary_data = prof_data.get("summary", {})
-        demand_rate = summary_data.get("demand_rate", 0)
-        # Estimate solar's demand reduction: if solar covers X% of consumption,
-        # it reduces peak demand by roughly that percentage
-        if demand_rate > 0 and daily_summary.get("consumption_w", 0) > 0:
-            solar_w = daily_summary.get("solar_w", 0)
-            cons_w = daily_summary.get("consumption_w", 0)
-            solar_pct = min(solar_w / cons_w, 1.0) if cons_w > 0 else 0
-            # Peak demand without solar ~ consumption / 1000 kW
-            # Demand reduction from solar (rough estimate)
-            peak_kw = cons_w / 1000
-            demand_reduction_kw = peak_kw * solar_pct
-            demand_savings_monthly = round(demand_reduction_kw * demand_rate, 2)
-    except Exception as e:
-        logger.debug("Solar loan: profitability engine error: %s", e)
 
     total_monthly_savings = monthly_solar_savings + demand_savings_monthly
     net_monthly = total_monthly_savings - monthly_payment

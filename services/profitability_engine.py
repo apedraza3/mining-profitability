@@ -48,6 +48,24 @@ class ProfitabilityEngine:
         return (wattage * 24 / 1000) * cost_kwh
 
     @staticmethod
+    def marginal_energy_rate(elec_settings: dict) -> float | None:
+        """$/kWh for energy that doesn't raise the monthly peak: (energy + WPCA) x (1 + tax).
+        None if the electricity dashboard didn't provide an energy rate."""
+        energy = (elec_settings or {}).get("energy_rate")
+        if not energy:
+            return None
+        wpca = elec_settings.get("wpca_rate") or 0
+        tax = elec_settings.get("tax_rate") or 0
+        return round((float(energy) + float(wpca)) * (1 + float(tax)), 5)
+
+    @staticmethod
+    def demand_rate_with_tax(elec_settings: dict) -> float:
+        """$/month per kW added to the monthly peak, including taxes (0 if unknown)."""
+        demand = (elec_settings or {}).get("demand_rate") or 0
+        tax = (elec_settings or {}).get("tax_rate") or 0
+        return round(float(demand) * (1 + float(tax)), 4)
+
+    @staticmethod
     def effective_elec_rate(location: dict, total_location_watts: int = 0) -> tuple[float, float]:
         """Calculate effective electricity rate after solar offset.
         Returns (effective_rate, solar_offset_pct) where offset is 0.0 to 1.0."""
@@ -265,7 +283,8 @@ class ProfitabilityEngine:
         else:
             best_source, best_daily = None, 0
 
-        # Revenue from the best source; electricity adjusted for actual uptime
+        # Revenue from the best source. Estimates assume 100% uptime, so a miner
+        # that was down part of the time earns AND draws power only while up.
         daily_electricity = self.daily_electricity_cost(
             effective_watts, location.get("electricity_cost_kwh", 0.10)
         ) * uptime_factor
@@ -275,12 +294,10 @@ class ProfitabilityEngine:
             daily_revenue = hrn.get("daily_revenue", 0)
         else:
             daily_revenue = 0
+        daily_revenue *= uptime_factor
 
         # ROI calculated after solar_profit is determined (moved below)
-
-        # Breakeven electricity rate: $/kWh at which this miner's profit = $0
-        daily_kwh = effective_watts * 24 / 1000
-        breakeven_elec_rate = round(daily_revenue / daily_kwh, 4) if daily_kwh > 0 and daily_revenue > 0 else 0
+        daily_kwh = effective_watts * 24 / 1000 * uptime_factor
 
         # J/TH efficiency (joules per terahash-second)
         hashrate = miner.get("hashrate", 0)
@@ -317,6 +334,14 @@ class ProfitabilityEngine:
         # Hosting fee (monthly, spread daily)
         hosting_fee_monthly = location.get("hosting_fee_monthly", 0) or 0
         hosting_fee_daily = hosting_fee_monthly / 30 if hosting_fee_monthly > 0 else 0
+
+        # Breakeven electricity rate: $/kWh at which this miner's profit = $0,
+        # after pool fee and hosting fee (energy basis; excludes demand charges)
+        breakeven_revenue = daily_revenue - pool_fee_daily - hosting_fee_daily
+        breakeven_elec_rate = (
+            round(breakeven_revenue / daily_kwh, 4)
+            if daily_kwh > 0 and breakeven_revenue > 0 else 0
+        )
 
         # Solar-adjusted electricity cost
         si = solar_info or {}
@@ -434,19 +459,27 @@ class ProfitabilityEngine:
         # Find the home location and inject solar + demand data
         for loc_id, loc in locations.items():
             if loc.get("name", "").lower() == "home":
-                # Inject demand rate for cost calculations
-                loc["_demand_rate"] = settings.get("demand_rate", 15.38)
+                # Use the dashboard's bill-derived marginal energy rate (energy + WPCA +
+                # taxes) instead of the hand-entered location rate. Demand is billed
+                # separately (see calculate_all), so it is NOT folded into this rate.
+                marginal = self.marginal_energy_rate(settings)
+                if marginal:
+                    loc["_configured_rate"] = loc.get("electricity_cost_kwh")
+                    loc["electricity_cost_kwh"] = marginal
+                    loc["_rate_source"] = "electricity-dashboard: energy + WPCA + taxes (demand billed separately)"
+                loc["_demand_rate"] = self.demand_rate_with_tax(settings)
 
                 # Use actual daily accumulated kWh from electricity dashboard
                 # (much more accurate than instantaneous watts × peak sun hours)
-                actual_solar_kwh = (daily_summary or {}).get("solar_kwh", 0)
-                actual_consumption_kwh = (daily_summary or {}).get("consumption_kwh", 0)
-                actual_crypto_kwh = (daily_summary or {}).get("crypto_kwh", 0)
+                actual_solar_kwh = (daily_summary or {}).get("solar_kwh") or 0
+                actual_consumption_kwh = (daily_summary or {}).get("consumption_kwh") or 0
+                actual_crypto_kwh = (daily_summary or {}).get("crypto_kwh") or 0
 
                 # Also grab realtime for live display values
-                solar_w = (solar_data or {}).get("solar_production_w", 0)
-                consumption_w = (solar_data or {}).get("house_consumption_w", 0)
-                crypto_w = (solar_data or {}).get("crypto_mining_w", 0)
+                # Fields are None when a source is down; treat as 0 for display math
+                solar_w = (solar_data or {}).get("solar_production_w") or 0
+                consumption_w = (solar_data or {}).get("house_consumption_w") or 0
+                crypto_w = (solar_data or {}).get("crypto_mining_w") or 0
 
                 if actual_solar_kwh > 0 and actual_consumption_kwh > 0:
                     # Today's summary is partial (only covers hours so far today).
@@ -743,18 +776,14 @@ class ProfitabilityEngine:
 
         # Summary
         active = [r for r in results if r["status"] != "inactive"]
+        # Use each miner's waterfall so totals match the per-miner rows (best source,
+        # uptime-adjusted revenue and electricity)
         total_daily_revenue = sum(
-            max(
-                r["sources"]["whattomine"].get("daily_revenue", 0),
-                r["sources"]["hashrateno"].get("daily_revenue", 0),
-            ) * r["miner"].get("quantity", 1)
+            r["waterfall"]["gross_revenue"] * r["miner"].get("quantity", 1)
             for r in active
         )
         total_daily_elec = sum(
-            self.daily_electricity_cost(
-                r["power"]["effective_watts"],
-                r["location"].get("electricity_cost_kwh", 0.10),
-            ) * r["miner"].get("quantity", 1)
+            r["waterfall"]["electricity_cost"] * r["miner"].get("quantity", 1)
             for r in active
         )
         total_daily_profit = total_daily_revenue - total_daily_elec
@@ -808,27 +837,29 @@ class ProfitabilityEngine:
                 r.get("best_daily_profit", 0) * r["miner"].get("quantity", 1)
             )
 
-        # Calculate demand charges using actual measured peak from electricity dashboard
-        # We track the highest observed peak per billing month (high water mark)
-        demand_rate = elec_settings.get("demand_rate", 0)
+        # Demand charge attributable to mining. CORE bills the house's highest
+        # 60-minute average kW (any hour). An always-on miner adds its full kW to
+        # that peak, so mining's share = sum of home miner kW, capped at the measured
+        # house peak. The house peak itself includes non-mining load (AC, etc.) and
+        # must not be charged to mining wholesale.
+        demand_rate = self.demand_rate_with_tax(elec_settings)
         bill_estimate = elec_settings.get("_bill_estimate") or {}
-        actual_peak_kw = bill_estimate.get("peak_demand_kw", 0)
+        house_peak_kw = bill_estimate.get("peak_demand_kw", 0) or 0
         home_demand = {}
 
-        if demand_rate > 0 and actual_peak_kw > 0 and self.history_svc:
-            # Store highest peak — only goes up, never down within a billing month
-            total_home_kw = self.history_svc.update_peak_demand(actual_peak_kw)
-            total_home_demand_charge = round(total_home_kw * demand_rate, 2)
-        elif demand_rate > 0:
-            # Fallback: sum miner rated wattages if electricity dashboard unavailable
+        if demand_rate > 0:
             for r in active:
                 if r["location"].get("name", "").lower() == "home":
                     w = r["power"]["effective_watts"] * r["miner"].get("quantity", 1)
-                    home_demand[r["miner"].get("name", "")] = {
-                        "watts": w,
-                        "kw": w / 1000,
-                        "monthly_demand_charge": round((w / 1000) * demand_rate, 2),
-                    }
+                    home_demand[r["miner"].get("name", "")] = {"watts": w, "kw": w / 1000}
+            total_home_kw = sum(d["kw"] for d in home_demand.values())
+            scale = 1.0
+            if house_peak_kw > 0 and total_home_kw > house_peak_kw:
+                # Nameplate exceeds the measured peak (miners off or derated)
+                scale = house_peak_kw / total_home_kw
+            for d in home_demand.values():
+                d["kw"] *= scale
+                d["monthly_demand_charge"] = round(d["kw"] * demand_rate, 2)
             total_home_kw = sum(d["kw"] for d in home_demand.values())
             total_home_demand_charge = round(total_home_kw * demand_rate, 2)
         else:
@@ -878,6 +909,7 @@ class ProfitabilityEngine:
                 "demand_rate": demand_rate,
                 "home_mining_kw": round(total_home_kw, 2),
                 "home_demand_charge": total_home_demand_charge,
+                "house_peak_kw": round(house_peak_kw, 2),
             },
             "by_location": by_location,
             "last_updated": datetime.now().isoformat(),
