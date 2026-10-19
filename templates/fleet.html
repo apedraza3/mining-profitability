@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Fleet Now - Mining Dashboard{% endblock %}
+
+{% block content %}
+    <div class="tool-page">
+        <div class="tool-page-header">
+            <h2>Fleet Now</h2>
+            <p class="tool-desc">What is running, what it's making, and what it costs. Expected earnings use PowerPool's published pay rate &times; pool hashrate; home power uses your marginal rate with demand shown separately.</p>
+            <p class="tool-desc" id="fleetUpdated"></p>
+        </div>
+
+        <div class="fleet-sources" id="fleetSources"></div>
+
+        <div class="fleet-summary" id="fleetSummary"></div>
+
+        <div class="analysis-panel">
+            <div class="fleet-table-wrap">
+                <table class="fleet-table">
+                    <thead>
+                        <tr>
+                            <th>Machine</th>
+                            <th>Status</th>
+                            <th class="num">Hashrate</th>
+                            <th class="num">Watts</th>
+                            <th class="num">Expected $/day</th>
+                            <th class="num">Power $/day</th>
+                            <th class="num">Demand $/day</th>
+                            <th class="num">Net $/day</th>
+                            <th class="num">Net incl. demand</th>
+                        </tr>
+                    </thead>
+                    <tbody id="fleetRows">
+                        <tr><td colspan="9" class="muted">Loading&hellip;</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="analysis-panel">
+            <h3 class="fleet-h3">Accounts</h3>
+            <div id="fleetAccounts" class="fleet-accounts"></div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+    <script src="/static/js/fleet.js?v=1"></script>
+{% endblock %}

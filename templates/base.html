@@ -4,13 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Mining Profitability Dashboard{% endblock %}</title>
-    <link rel="stylesheet" href="/static/css/dashboard.css?v=12">
+    <link rel="stylesheet" href="/static/css/dashboard.css?v=13">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <!-- Nav -->
     <nav class="tool-nav">
         <a href="/" class="tool-nav-link {% if active_page == 'dashboard' %}active{% endif %}">Dashboard</a>
+        <a href="/fleet" class="tool-nav-link {% if active_page == 'fleet' %}active{% endif %}">Fleet Now</a>
         <a href="/swap" class="tool-nav-link {% if active_page == 'swap' %}active{% endif %}">Swap Calculator</a>
         <a href="/pools" class="tool-nav-link {% if active_page == 'pools' %}active{% endif %}">Pool Comparison</a>
         <a href="/optimizer" class="tool-nav-link {% if active_page == 'optimizer' %}active{% endif %}">Power Optimizer</a>

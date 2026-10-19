@@ -9,3 +9,18 @@ services:
     volumes:
       - ./data:/app/data
       - ./cache:/app/cache
+
+  # Only process that calls miners and vendor APIs, and the only writer of
+  # data/telemetry.db. Write-capable keys (Foreman, Clore) live in fleet.env,
+  # which the web container above never loads.
+  fleet-poller:
+    build: .
+    container_name: mining-fleet-poller
+    restart: unless-stopped
+    network_mode: host
+    command: ["python", "-m", "fleet.poller"]
+    env_file:
+      - .env
+      - fleet.env
+    volumes:
+      - ./data:/app/data

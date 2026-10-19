@@ -230,6 +230,21 @@ def solar_page():
     return render_template("solar.html", active_page="solar")
 
 
+@app.route("/fleet")
+@login_required
+def fleet_page():
+    return render_template("fleet.html", active_page="fleet")
+
+
+@app.route("/api/fleet", methods=["GET"])
+@login_required
+def fleet_api():
+    """What is running now and what it's making. Reads telemetry.db only (the
+    fleet poller container does all outbound calls)."""
+    from fleet.view import build_fleet
+    return jsonify(build_fleet(inventory_mgr.get_all_miners(), inventory_mgr.get_all_locations()))
+
+
 # ---- Miners API ----
 
 @app.route("/api/miners", methods=["GET"])

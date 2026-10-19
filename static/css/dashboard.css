@@ -914,3 +914,40 @@ body {
     .solar-loan-stats { grid-template-columns: 1fr; }
     .solar-live-grid { grid-template-columns: 1fr; }
 }
+
+/* ---- Fleet Now ---- */
+.fleet-sources { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.src-chip { font-size: 0.8rem; padding: 4px 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); }
+.src-chip strong { margin-right: 2px; }
+.src-ok { border-color: var(--success); color: #bbf7d0; }
+.src-stale { border-color: var(--warning); color: #fef08a; }
+.src-error { border-color: var(--danger); color: #fecaca; }
+.src-not-configured { color: var(--text-muted); }
+.fleet-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.fleet-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; }
+.fleet-card-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.fleet-card-value { font-size: 1.25rem; font-weight: 600; margin-top: 4px; }
+.fleet-card-sub { font-size: 0.78rem; color: var(--text-muted); margin-top: 2px; }
+.fleet-card-value.pos { color: var(--profit-green); }
+.fleet-card-value.neg { color: var(--profit-red); }
+.fleet-card-value.warn { color: var(--warning); }
+.fleet-table-wrap { overflow-x: auto; }
+.fleet-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+.fleet-table th { text-align: left; font-weight: 500; color: var(--text-muted); padding: 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.fleet-table td { padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.fleet-table .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.fleet-table td.pos { color: var(--profit-green); }
+.fleet-table td.neg { color: var(--profit-red); }
+.fleet-table td.est { color: var(--text-muted); font-style: italic; }
+.fleet-name { font-weight: 600; }
+.fleet-meta { font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; }
+.fleet-flag { font-size: 0.72rem; color: var(--warning); margin-top: 2px; }
+.st { font-size: 0.78rem; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.st-ok { background: #14532d; color: #bbf7d0; }
+.st-bad { background: #7f1d1d; color: #fecaca; }
+.st-unknown { background: var(--border); color: var(--text-muted); }
+.fleet-h3 { font-size: 1rem; font-weight: 600; margin-bottom: 10px; }
+.fleet-accounts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.fleet-account { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
+.fleet-line { font-size: 0.82rem; margin-top: 4px; word-break: break-word; }
+.muted { color: var(--text-muted); }
