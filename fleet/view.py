@@ -187,7 +187,9 @@ def reconcile_home_power(rows, realtime, home_rate, demand_rate):
             "measured_at": None, "mode": "no meter",
             # Pool says these aren't hashing, so they're counted at 0 W. If they're still
             # powered on, their draw is inside the gap (and earning nothing).
-            "assumed_off": [r["name"] for r in home if r.get("watts_quality") == "assumed off"]}
+            # Machines the owner marked inactive in inventory are known to be off.
+            "assumed_off": [r["name"] for r in home if r.get("watts_quality") == "assumed off"
+                            and r.get("inventory_status") != "inactive"]}
     if not realtime or realtime.get("crypto_mining_w") is None:
         return info
     age = _age_s(realtime.get("measured_at"))
@@ -329,6 +331,9 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
                         if expected_usd is not None and power_usd is not None else None)
         net_loaded = (net_marginal - (demand_usd or 0) if net_marginal is not None else None)
 
+        if running is False and (inv or {}).get("status") == "inactive":
+            status = "off (marked inactive)"
+
         rows.append({
             "name": primary["name"],
             "sources": sorted(by_source),
@@ -336,6 +341,7 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
             "location": location,
             "model": ((device or {}).get("extra") or {}).get("model") or (inv or {}).get("model"),
             "in_inventory": inv is not None,
+            "inventory_status": (inv or {}).get("status"),
             "running": running,
             "status": status,
             "algorithm": algorithm,

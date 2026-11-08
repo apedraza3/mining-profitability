@@ -17,6 +17,13 @@ from fleet import settings
 from fleet.adapters.base import Adapter
 from fleet.units import to_hs
 
+# Bitmain Equihash firmware (Antminer Z9/Z11/Z15) labels its hashrate "GHS" but the number
+# is Sol/s: a Z11 at ~140 KSol/s reports "GHS av": 140446 (checked live 2026-11-08,
+# cgminer 4.9.0). Treat those values as plain H/s (Sol/s) instead of x1e9.
+EQUIHASH_MODEL = re.compile(r"antminer\s*z\d", re.IGNORECASE)
+CHIP_TEMP_KEY = re.compile(r"^temp(2_\d+|_chip\d*|\d+_chip)$", re.IGNORECASE)
+BOARD_TEMP_KEY = re.compile(r"^temp\d+$", re.IGNORECASE)
+
 HASH_KEY = re.compile(r"^([KMGTP])HS (5s|av|30m|1m|5m|15m)$", re.IGNORECASE)
 KEY_PREFERENCE = ("5s", "1m", "5m", "15m", "30m", "av")
 
@@ -51,20 +58,46 @@ def parse_cgminer_json(text: str) -> dict:
         return merged
 
 
-def parse_hashrate(summary: dict) -> float | None:
+def parse_hashrate(summary: dict, model: str | None = None) -> float | None:
     """Pick the freshest hashrate field and convert it to H/s."""
+    sol_mislabelled = bool(model and EQUIHASH_MODEL.search(model))
     found = {}
     for key, value in summary.items():
         m = HASH_KEY.match(key.strip())
         if m and value is not None:
             try:
-                found[m.group(2).lower()] = to_hs(float(value), f"{m.group(1).upper()}H/s")
+                unit = "H/s" if sol_mislabelled else f"{m.group(1).upper()}H/s"
+                found[m.group(2).lower()] = to_hs(float(value), unit)
             except (TypeError, ValueError):
                 continue
     for window in KEY_PREFERENCE:
         if window in found:
             return found[window]
     return None
+
+
+def parse_stats(stats: dict) -> dict:
+    """Model name, hottest chip/board temperature and fan speeds from cgminer `stats`."""
+    entries = stats.get("STATS") or []
+    model = None
+    temps_chip, temps_board, fans = [], [], []
+    for e in entries:
+        model = model or e.get("Type")
+        for k, v in e.items():
+            if not isinstance(v, (int, float)) or v <= 0:
+                continue
+            if CHIP_TEMP_KEY.match(k):
+                temps_chip.append(v)
+            elif BOARD_TEMP_KEY.match(k):
+                temps_board.append(v)
+            elif re.match(r"^fan\d+$", k):
+                fans.append(v)
+    return {
+        "model": model,
+        "temp_max": max(temps_chip or temps_board) if (temps_chip or temps_board) else None,
+        "board_temp_max": max(temps_board) if temps_board else None,
+        "fans_rpm": fans,
+    }
 
 
 class LanAsicAdapter(Adapter):
@@ -88,7 +121,11 @@ class LanAsicAdapter(Adapter):
             }
             try:
                 summary = (cgminer_command(host, port, "summary").get("SUMMARY") or [{}])[0]
-                hs = parse_hashrate(summary)
+                try:
+                    st = parse_stats(cgminer_command(host, port, "stats"))
+                except Exception:
+                    st = {"model": None, "temp_max": None, "board_temp_max": None, "fans_rpm": []}
+                hs = parse_hashrate(summary, st["model"])
                 pool = {}
                 try:
                     pools = cgminer_command(host, port, "pools").get("POOLS") or []
@@ -102,7 +139,10 @@ class LanAsicAdapter(Adapter):
                     "running": (hs or 0) > 0,
                     "status": "hashing" if (hs or 0) > 0 else "no hashrate",
                     "hashrate_hs": hs,
-                    "extra": {"ip": host, "elapsed_s": summary.get("Elapsed"), "pool": pool},
+                    "temp_max": st["temp_max"],
+                    "extra": {"ip": host, "elapsed_s": summary.get("Elapsed"), "pool": pool,
+                              "model": st["model"], "board_temp_max": st["board_temp_max"],
+                              "fans_rpm": st["fans_rpm"]},
                 })
             except (OSError, ValueError) as e:
                 # One unreachable miner must not fail the whole source
