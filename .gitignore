@@ -13,3 +13,4 @@ data/*.db
 data/.flask_secret
 deploy-update.sh
 fleet.env
+data/fleet_overheads.json

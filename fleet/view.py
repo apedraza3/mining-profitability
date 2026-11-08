@@ -7,10 +7,12 @@ Every money figure says where it came from:
 - demand share (home only): kW x demand rate incl. tax / 30.4 days, shown separately
 """
 
+import json
+import logging
 import re
 from datetime import datetime, timezone
 
-from fleet import store
+from fleet import settings, store
 from fleet.adapters import all_adapters
 from fleet.units import to_hs
 
@@ -170,7 +172,41 @@ def _apply_costs(row, watts, quality, rate, demand_rate, is_home):
                                  if row["net_marginal_usd_day"] is not None else None)
 
 
-def reconcile_home_power(rows, realtime, home_rate, demand_rate):
+logger = logging.getLogger(__name__)
+
+
+def load_overheads() -> dict:
+    """Owner-declared support loads on the metered circuits (see settings.FLEET_OVERHEADS)."""
+    try:
+        with open(settings.FLEET_OVERHEADS, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as e:
+        logger.warning("Ignoring unreadable %s: %s", settings.FLEET_OVERHEADS, e)
+        return {}
+
+
+def _charge_overhead(rows, overhead_row, serves):
+    """Split a support load's cost across the machines it exists for (by their watts),
+    so e.g. the immersion tank's pump and dry cooler show up in the Z15's own net."""
+    wanted = {norm(n) for n in serves or []}
+    served = [r for r in rows if norm(r["name"]) in wanted and r.get("kind") != "overhead"]
+    if not served:
+        return []
+    cost = (overhead_row["power_usd_day"] or 0) + (overhead_row["demand_usd_day"] or 0)
+    total_w = sum(r["watts"] or 0 for r in served)
+    for r in served:
+        share = (r["watts"] or 0) / total_w if total_w else 1 / len(served)
+        r["overhead_usd_day"] = cost * share
+        r["overhead_label"] = overhead_row["name"]
+        r["net_incl_overhead_usd_day"] = (r["net_loaded_usd_day"] - r["overhead_usd_day"]
+                                          if r.get("net_loaded_usd_day") is not None else None)
+    return [r["name"] for r in served]
+
+
+def reconcile_home_power(rows, realtime, home_rate, demand_rate, overheads=None):
     """Compare Emporia's measured crypto-circuit watts with the home machines we know.
 
     - within +/-15%: scale the estimated (nameplate) home machines so the total matches
@@ -202,10 +238,30 @@ def reconcile_home_power(rows, realtime, home_rate, demand_rate):
     gap = measured - accounted
     info["gap_w"] = round(gap)
 
+    overhead = (overheads or {}).get("home") or {}
     estimated = [r for r in home if r["watts"] and str(r.get("watts_quality") or "").startswith("estimated")]
     est_sum = sum(r["watts"] for r in estimated)
     fixed = accounted - est_sum
-    if measured > 0 and abs(gap) / measured <= ALLOCATE_TOLERANCE and est_sum > 0 and measured > fixed:
+    if overhead.get("label") and gap > 0:
+        # A declared support load takes the whole gap. (Allocation is skipped: it would
+        # wrongly spread the cooling's watts over the miners.)
+        row = {
+            "name": overhead["label"], "sources": ["emporia"], "kind": "overhead",
+            "location": "home", "model": None, "in_inventory": False, "running": None,
+            "status": "measured (meter minus miners)", "algorithm": None, "hashrate_hs": None,
+            "device_hashrate_hs": None, "rate_kwh": home_rate, "expected_usd_day": None,
+            "expected_basis": ("Emporia crypto circuits minus every known home miner. Includes any "
+                               "error in the miners' nameplate watts."),
+            "stale_sources": [], "observed_at": realtime.get("measured_at"), "detail": {},
+        }
+        _apply_costs(row, gap, "measured (Emporia) minus miners", home_rate, demand_rate, True)
+        if row["power_usd_day"] is not None:
+            row["net_marginal_usd_day"] = -row["power_usd_day"]
+            row["net_loaded_usd_day"] = -(row["power_usd_day"] + (row["demand_usd_day"] or 0))
+        row["serves"] = _charge_overhead(rows, row, overhead.get("serves"))
+        rows.append(row)
+        info.update(mode="overhead", overhead_label=overhead["label"], overhead_serves=row["serves"])
+    elif measured > 0 and abs(gap) / measured <= ALLOCATE_TOLERANCE and est_sum > 0 and measured > fixed:
         factor = (measured - fixed) / est_sum
         for r in estimated:
             _apply_costs(r, r["watts"] * factor, "allocated (Emporia crypto circuits)",
@@ -364,9 +420,10 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
     rows.extend(_inventory_only_rows(inventory_miners, inventory_locations, matched_inventory_ids,
                                      rates, btc_usd, home_rate, demand_rate))
     realtime = (accounts.get("electricity:realtime") or {}).get("data")
-    home_power = reconcile_home_power(rows, realtime, home_rate, demand_rate)
-    rows.sort(key=lambda r: (r["location"] or "zzz", r["kind"] == "unattributed", r["name"].lower()))
-    machine_rows = [r for r in rows if r["kind"] != "unattributed"]
+    home_power = reconcile_home_power(rows, realtime, home_rate, demand_rate, load_overheads())
+    support = ("unattributed", "overhead")
+    rows.sort(key=lambda r: (r["location"] or "zzz", r["kind"] in support, r["name"].lower()))
+    machine_rows = [r for r in rows if r["kind"] not in support]
 
     def total(field):
         vals = [r[field] for r in rows if r[field] is not None]

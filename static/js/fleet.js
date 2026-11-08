@@ -95,7 +95,9 @@
             var kw = function (w) { return (w / 1000).toFixed(2) + ' kW'; };
             var sub = 'Emporia crypto circuits vs ' + kw(hp.accounted_w) + ' from known machines';
             var cls = '';
-            if (hp.mode === 'allocated') {
+            if (hp.mode === 'overhead') {
+                sub = 'miners ' + kw(hp.accounted_w) + ' + ' + hp.overhead_label + ' ' + kw(hp.gap_w);
+            } else if (hp.mode === 'allocated') {
                 sub = 'matches known machines; their watts are now allocated from the meter';
             } else if (hp.mode === 'unattributed gap') {
                 sub = kw(hp.gap_w) + ' not matched to any machine' +
@@ -125,7 +127,11 @@
                 el('div', { cls: 'fleet-name', text: r.name }),
                 el('div', { cls: 'fleet-meta', text: [r.model, r.location, r.sources.join(' + ')].filter(Boolean).join(' · ') }),
                 r.in_inventory ? null : el('div', { cls: 'fleet-flag', text: 'not in inventory' }),
-                r.stale_sources.length ? el('div', { cls: 'fleet-flag', text: 'stale: ' + r.stale_sources.join(', ') }) : null
+                r.stale_sources.length ? el('div', { cls: 'fleet-flag', text: 'stale: ' + r.stale_sources.join(', ') }) : null,
+                r.overhead_usd_day ? el('div', { cls: 'fleet-flag',
+                    text: 'with ' + r.overhead_label + ' (' + money(-r.overhead_usd_day) + '): net ' +
+                        money(r.net_incl_overhead_usd_day) + '/day' }) : null,
+                r.serves && r.serves.length ? el('div', { cls: 'fleet-meta', text: 'cools ' + r.serves.join(', ') }) : null
             ]);
             var statusCell = el('td', {}, [el('span', { cls: 'st ' + statusClass(r), text: r.status || 'unknown' })]);
             var hr = el('td', { cls: 'num', text: hashrate(r.hashrate_hs),

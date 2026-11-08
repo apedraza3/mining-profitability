@@ -13,6 +13,9 @@ load_dotenv()
 load_dotenv("fleet.env")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+# Non-mining loads on the metered crypto circuits (cooling etc.), edited by the owner:
+# {"home": {"label": "Immersion pump + dry cooler", "serves": ["Z15"]}}
+FLEET_OVERHEADS = Path(os.getenv("FLEET_OVERHEADS", str(BASE_DIR / "data" / "fleet_overheads.json")))
 TELEMETRY_DB = Path(os.getenv("FLEET_DB", str(BASE_DIR / "data" / "telemetry.db")))
 
 # Raw samples older than this are purged (rollups come later)
