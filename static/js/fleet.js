@@ -96,7 +96,9 @@
             var sub = 'Emporia crypto circuits vs ' + kw(hp.accounted_w) + ' from known machines';
             var cls = '';
             if (hp.mode === 'overhead') {
-                sub = 'miners ' + kw(hp.accounted_w) + ' + ' + hp.overhead_label + ' ' + kw(hp.gap_w);
+                sub = 'miners ' + kw(hp.accounted_w) + ' + ' + hp.overhead_label + ' ' + kw(hp.overhead_w) +
+                    (hp.unattributed_w > 50 ? ' + ' + kw(hp.unattributed_w) + ' unexplained' : '');
+                if (hp.unattributed_w > 50) cls = 'warn';
             } else if (hp.mode === 'allocated') {
                 sub = 'matches known machines; their watts are now allocated from the meter';
             } else if (hp.mode === 'unattributed gap') {

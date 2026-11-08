@@ -242,25 +242,45 @@ def reconcile_home_power(rows, realtime, home_rate, demand_rate, overheads=None)
     estimated = [r for r in home if r["watts"] and str(r.get("watts_quality") or "").startswith("estimated")]
     est_sum = sum(r["watts"] for r in estimated)
     fixed = accounted - est_sum
-    if overhead.get("label") and gap > 0:
-        # A declared support load takes the whole gap. (Allocation is skipped: it would
-        # wrongly spread the cooling's watts over the miners.)
+    def support_row(name, kind, status, basis, watts, quality):
         row = {
-            "name": overhead["label"], "sources": ["emporia"], "kind": "overhead",
-            "location": "home", "model": None, "in_inventory": False, "running": None,
-            "status": "measured (meter minus miners)", "algorithm": None, "hashrate_hs": None,
-            "device_hashrate_hs": None, "rate_kwh": home_rate, "expected_usd_day": None,
-            "expected_basis": ("Emporia crypto circuits minus every known home miner. Includes any "
-                               "error in the miners' nameplate watts."),
+            "name": name, "sources": ["emporia"], "kind": kind, "location": "home",
+            "model": None, "in_inventory": False, "running": None, "status": status,
+            "algorithm": None, "hashrate_hs": None, "device_hashrate_hs": None,
+            "rate_kwh": home_rate, "expected_usd_day": None, "expected_basis": basis,
             "stale_sources": [], "observed_at": realtime.get("measured_at"), "detail": {},
         }
-        _apply_costs(row, gap, "measured (Emporia) minus miners", home_rate, demand_rate, True)
+        _apply_costs(row, watts, quality, home_rate, demand_rate, True)
+        # Its net is just its cost: nothing earns from it
         if row["power_usd_day"] is not None:
             row["net_marginal_usd_day"] = -row["power_usd_day"]
             row["net_loaded_usd_day"] = -(row["power_usd_day"] + (row["demand_usd_day"] or 0))
-        row["serves"] = _charge_overhead(rows, row, overhead.get("serves"))
         rows.append(row)
-        info.update(mode="overhead", overhead_label=overhead["label"], overhead_serves=row["serves"])
+        return row
+
+    unattributed_basis = ("Emporia crypto circuits minus every known home machine. Usually a "
+                          "machine that is powered but not hashing, one not in inventory, or "
+                          "miners drawing more than their nameplate watts.")
+    if overhead.get("label") and gap > 0:
+        # A declared support load takes the gap, up to its rated maximum (max_w). Anything
+        # beyond that can't be the support load and stays unattributed. Allocation across
+        # nameplate estimates is skipped: it would spread the cooling's watts over miners.
+        max_w = overhead.get("max_w")
+        support_w = min(gap, float(max_w)) if max_w else gap
+        rest_w = gap - support_w
+        cap_note = (f" Capped at its rated max of {float(max_w):.0f} W." if max_w else "")
+        row = support_row(
+            overhead["label"], "overhead", "measured (meter minus miners)",
+            "Emporia crypto circuits minus every known home miner." + cap_note +
+            (" " + overhead["note"] if overhead.get("note") else ""),
+            support_w, "measured (Emporia) minus miners" + (", capped at rated max" if rest_w > 0 else ""))
+        row["serves"] = _charge_overhead(rows, row, overhead.get("serves"))
+        info.update(mode="overhead", overhead_label=overhead["label"], overhead_serves=row["serves"],
+                    overhead_w=round(support_w), unattributed_w=round(rest_w))
+        if rest_w > 50:
+            support_row("Unattributed home mining power", "unattributed", "measured, no machine",
+                        unattributed_basis + f" This is what's left after {overhead['label']} at "
+                        "its rated max.", rest_w, "measured (Emporia) minus known")
     elif measured > 0 and abs(gap) / measured <= ALLOCATE_TOLERANCE and est_sum > 0 and measured > fixed:
         factor = (measured - fixed) / est_sum
         for r in estimated:
@@ -269,21 +289,8 @@ def reconcile_home_power(rows, realtime, home_rate, demand_rate, overheads=None)
         info["mode"] = "allocated"
         info["gap_w"] = 0
     elif gap > 0:
-        row = {
-            "name": "Unattributed home mining power", "sources": ["emporia"], "kind": "unattributed",
-            "location": "home", "model": None, "in_inventory": False, "running": None,
-            "status": "measured, no machine", "algorithm": None, "hashrate_hs": None,
-            "device_hashrate_hs": None, "rate_kwh": home_rate, "expected_usd_day": None,
-            "expected_basis": ("Emporia crypto circuits minus every known home machine. Usually a "
-                               "machine that is powered but not hashing, or one not in inventory."),
-            "stale_sources": [], "observed_at": realtime.get("measured_at"), "detail": {},
-        }
-        _apply_costs(row, gap, "measured (Emporia) minus known", home_rate, demand_rate, True)
-        # Its net is just its cost: nothing earns from it
-        if row["power_usd_day"] is not None:
-            row["net_marginal_usd_day"] = -row["power_usd_day"]
-            row["net_loaded_usd_day"] = -(row["power_usd_day"] + (row["demand_usd_day"] or 0))
-        rows.append(row)
+        support_row("Unattributed home mining power", "unattributed", "measured, no machine",
+                    unattributed_basis, gap, "measured (Emporia) minus known")
         info["mode"] = "unattributed gap"
     else:
         info["mode"] = "meter below estimates"
