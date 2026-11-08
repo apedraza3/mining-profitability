@@ -1071,11 +1071,25 @@ def solar_mining_summary():
         # Marginal energy rate (energy + WPCA + taxes) from the dashboard; demand excluded
         energy_rate = summary.get("marginal_energy_rate") or summary.get("energy_rate", 0.08907)
 
-        # Use actual daily accumulated kWh from electricity dashboard
-        # (much more accurate than instantaneous watts × 24)
-        actual_solar_kwh = summary.get("solar_kwh") or 0
-        actual_consumption_kwh = summary.get("consumption_kwh") or 0
-        actual_crypto_kwh = summary.get("crypto_kwh") or 0
+        # Last 24 complete hours of metered kWh. (The dashboard's /api/summary is "today so
+        # far" from UTC midnight, i.e. 5 pm local, so using it as a full day undercounted,
+        # down to ~0 right after the rollover.) hour_start is "YYYY-MM-DD HH:00:00" UTC.
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        this_hour = _dt.now(_tz.utc).replace(minute=0, second=0, microsecond=0)
+        fmt = "%Y-%m-%d %H:00:00"
+        try:
+            hourly = req.get(f"{ELECTRICITY_API}/api/hourly", timeout=5, params={
+                "start": (this_hour - _td(hours=24)).strftime(fmt),
+                "end": (this_hour - _td(hours=1)).strftime(fmt)}).json()
+        except Exception:
+            hourly = []
+        hours = len(hourly) if isinstance(hourly, list) else 0
+        scale = 24 / hours if hours else 0   # extrapolate if a few hours are missing
+        def _kwh(field):
+            return sum(float(h.get(field) or 0) for h in hourly) / 1000 * scale if hours else 0
+        actual_solar_kwh = _kwh("solar_production_wh")
+        actual_consumption_kwh = _kwh("house_consumption_wh")
+        actual_crypto_kwh = _kwh("crypto_mining_wh")
 
         if actual_consumption_kwh > 0 and actual_solar_kwh > 0:
             # Crypto's proportional share of today's actual solar production

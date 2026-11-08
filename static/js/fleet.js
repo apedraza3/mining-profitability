@@ -116,6 +116,22 @@
             card(hp.non_mining_w ? 'Crypto sub-panel, measured' : 'Home mining, measured',
                 kw(hp.measured_w), sub, cls);
         }
+        var so = sm.solar;
+        if (so && so.solar_w !== null && so.solar_w !== undefined) {
+            var solarSub = 'house ' + (so.house_w / 1000).toFixed(2) + ' kW, grid ' +
+                (so.net_grid_w / 1000).toFixed(2) + ' kW';
+            if (so.solar_kwh_24h !== undefined) {
+                solarSub += ' · last 24 h ' + so.solar_kwh_24h.toFixed(0) + ' kWh; mining share ' +
+                    Math.round(so.mining_share * 100) + '% = ' + money(so.mining_solar_credit_usd_day) + '/day credit';
+            }
+            card('Solar now', (so.solar_w / 1000).toFixed(2) + ' kW', solarSub);
+            if (so.mining_solar_credit_usd_day !== null && so.mining_solar_credit_usd_day !== undefined &&
+                    sm.net_loaded_usd_day !== null) {
+                var after = sm.net_loaded_usd_day + so.mining_solar_credit_usd_day;
+                card('Net incl. solar credit', money(after) + '/day',
+                    'net incl. demand + mining share of solar', after < 0 ? 'neg' : 'pos');
+            }
+        }
     }
 
     function renderRows(rows) {

@@ -317,6 +317,36 @@ def reconcile_home_power(rows, realtime, home_rate, demand_rate, overheads=None)
     return info
 
 
+def solar_summary(realtime, home_power, home_rate) -> dict | None:
+    """Solar as the electricity dashboard sees it, and mining's share of its value.
+
+    CORE nets kWh monthly at the retail rate (Sep bill: 5,928 used - 25 exported = 5,903
+    billed), so solar doesn't change what the next mining kWh costs: every kWh still
+    displaces a retail kWh. Fleet costs therefore stay at the marginal rate, and solar is
+    shown as a separate credit: mining's share of house use x the solar it offset over the
+    last 24 h x the marginal rate. Same proportional method as the Solar page.
+    """
+    if not realtime:
+        return None
+    out = {"solar_w": realtime.get("solar_w"), "house_w": realtime.get("house_w"),
+           "net_grid_w": realtime.get("net_grid_w")}
+    day = realtime.get("last24h") or {}
+    if not day.get("house_kwh"):
+        return out
+    meter_w = home_power.get("measured_w") or 0
+    non_mining_w = home_power.get("non_mining_w") or 0
+    mining_fraction = (meter_w - non_mining_w) / meter_w if meter_w else 1.0
+    mining_kwh = (day.get("crypto_kwh") or 0) * mining_fraction
+    share = min(mining_kwh / day["house_kwh"], 1.0)
+    offset_kwh = min(day.get("solar_kwh") or 0, day["house_kwh"])
+    out.update(
+        hours=day.get("hours"), solar_kwh_24h=day.get("solar_kwh"), house_kwh_24h=day["house_kwh"],
+        mining_kwh_24h=round(mining_kwh, 1), mining_share=round(share, 3),
+        mining_solar_credit_usd_day=(round(offset_kwh * share * home_rate, 2) if home_rate else None),
+    )
+    return out
+
+
 def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
     data = store.read_all()
     intervals = _intervals()
@@ -471,6 +501,7 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
         "rows_missing_cost": sum(1 for r in machine_rows
                                  if r["power_usd_day"] is None and r["kind"] != "rental_server"),
         "home_power": home_power,
+        "solar": solar_summary(realtime, home_power, home_rate),
         "btc_usd": btc_usd,
         "home_rate_kwh": home_rate,
         "demand_rate_kw_month": demand_rate,

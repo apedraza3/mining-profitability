@@ -12,6 +12,7 @@ the last good values stay in the database and the source shows as failing.
 """
 
 import logging
+from datetime import datetime, timedelta, timezone
 
 from fleet import settings
 from fleet.adapters.base import Adapter
@@ -61,5 +62,22 @@ class ElectricityAdapter(Adapter):
                 "emporia_total_w": rt.get("emporia_total_w"),
                 "measured_at": rt.get("timestamp"),
                 "circuits": circuits,
+            }
+        # Last 24 complete hours. hour_start is stored as "YYYY-MM-DD HH:00:00" (space, UTC)
+        # and compared as text, so the bounds must use the same format.
+        this_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        fmt = "%Y-%m-%d %H:00:00"
+        hourly = self._optional(
+            f"/api/hourly?start={(this_hour - timedelta(hours=24)).strftime(fmt)}"
+            f"&end={(this_hour - timedelta(hours=1)).strftime(fmt)}")
+        if isinstance(hourly, list) and hourly and "electricity:realtime" in accounts:
+            def kwh(field):
+                return round(sum(float(h.get(field) or 0) for h in hourly) / 1000, 3)
+            accounts["electricity:realtime"]["last24h"] = {
+                "hours": len(hourly),
+                "solar_kwh": kwh("solar_production_wh"),
+                "house_kwh": kwh("house_consumption_wh"),
+                "crypto_kwh": kwh("crypto_mining_wh"),
+                "net_grid_kwh": kwh("net_grid_wh"),
             }
         return {"machines": [], "accounts": accounts}
