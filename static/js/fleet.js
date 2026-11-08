@@ -116,6 +116,20 @@
             card(hp.non_mining_w ? 'Crypto sub-panel, measured' : 'Home mining, measured',
                 kw(hp.measured_w), sub, cls);
         }
+        (sm.pdus || []).forEach(function (p) {
+            if (p.error) {
+                card('PDU ' + p.name, 'no reading', p.host + ': ' + p.error, 'warn');
+                return;
+            }
+            var unit = p.power_kind && p.power_kind.indexOf('VA') >= 0 ? ' kVA' : ' kW';
+            var parts = (p.branches || []).map(function (b) {
+                var v = b.watts !== undefined ? b.watts : b.va;
+                return b.branch + ' ' + (v / 1000).toFixed(2) + (b.amps !== null && b.amps !== undefined ? ' (' + b.amps.toFixed(1) + ' A)' : '');
+            });
+            if (p.peak_w) parts.push('peak ' + (p.peak_w / 1000).toFixed(2) + ' kW');
+            card('PDU ' + p.name, p.total_w === null ? '—' : (p.total_w / 1000).toFixed(2) + unit,
+                (parts.join(' · ') || p.host) + ' · ' + ago(p.fetched_at));
+        });
         var so = sm.solar;
         if (so && so.solar_w !== null && so.solar_w !== undefined) {
             var solarSub = 'house ' + (so.house_w / 1000).toFixed(2) + ' kW, grid ' +

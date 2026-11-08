@@ -502,6 +502,10 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
                                  if r["power_usd_day"] is None and r["kind"] != "rental_server"),
         "home_power": home_power,
         "solar": solar_summary(realtime, home_power, home_rate),
+        "pdus": [{k: a["data"].get(k) for k in ("name", "host", "total_w", "power_kind", "peak_w",
+                                                  "energy_kwh", "branches", "error", "sys_name")}
+                 | {"fetched_at": a["fetched_at"]}
+                 for a in data["accounts"] if a["account_key"].startswith("pdu:")],
         "btc_usd": btc_usd,
         "home_rate_kwh": home_rate,
         "demand_rate_kw_month": demand_rate,
@@ -510,7 +514,7 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
     account_view = []
     for a in data["accounts"]:
         if a["account_key"] in ("powerpool:payrates", "electricity:rates", "electricity:realtime",
-                                "kryptex:rates"):
+                                "kryptex:rates") or a["account_key"].startswith("pdu:"):
             continue
         d = a["data"]
         item = {"account": a["account_key"], "source": a["source"], "fetched_at": a["fetched_at"], "data": d}

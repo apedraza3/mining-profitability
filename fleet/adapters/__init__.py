@@ -3,6 +3,7 @@ from fleet.adapters.electricity import ElectricityAdapter
 from fleet.adapters.foreman import ForemanAdapter
 from fleet.adapters.kryptex import KryptexAdapter
 from fleet.adapters.lan_asic import LanAsicAdapter
+from fleet.adapters.pdu import PduAdapter
 from fleet.adapters.powerpool import PowerPoolAdapter
 
 
@@ -14,4 +15,5 @@ def all_adapters():
         KryptexAdapter(),
         LanAsicAdapter(),
         ElectricityAdapter(),
+        PduAdapter(),
     ]
