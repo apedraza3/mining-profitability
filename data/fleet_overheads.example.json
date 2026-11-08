@@ -1,8 +1,15 @@
 {
-  "home": {
-    "label": "Immersion pump + dry cooler",
-    "serves": ["Z15"],
-    "max_w": 2500,
-    "note": "Fog Hashing C6: tank+pump 800-1100 W (fixed flow), dry cooler 10-1400 W (EC fans follow temperature)."
-  }
+  "home": [
+    {
+      "label": "Immersion pump + dry cooler",
+      "serves": ["Z15"],
+      "max_w": 2500,
+      "note": "Fog Hashing C6: tank+pump 800-1100 W (fixed flow), dry cooler 10-1400 W (EC fans follow temperature)."
+    },
+    {
+      "label": "Server + workshop",
+      "mining": false,
+      "note": "Same sub-panel as the miners."
+    }
+  ]
 }

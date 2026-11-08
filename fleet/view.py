@@ -238,7 +238,9 @@ def reconcile_home_power(rows, realtime, home_rate, demand_rate, overheads=None)
     gap = measured - accounted
     info["gap_w"] = round(gap)
 
-    overhead = (overheads or {}).get("home") or {}
+    declared = (overheads or {}).get("home") or []
+    loads = [declared] if isinstance(declared, dict) else [l for l in declared if isinstance(l, dict)]
+    loads = [l for l in loads if l.get("label")]
     estimated = [r for r in home if r["watts"] and str(r.get("watts_quality") or "").startswith("estimated")]
     est_sum = sum(r["watts"] for r in estimated)
     fixed = accounted - est_sum
@@ -261,26 +263,44 @@ def reconcile_home_power(rows, realtime, home_rate, demand_rate, overheads=None)
     unattributed_basis = ("Emporia crypto circuits minus every known home machine. Usually a "
                           "machine that is powered but not hashing, one not in inventory, or "
                           "miners drawing more than their nameplate watts.")
-    if overhead.get("label") and gap > 0:
-        # A declared support load takes the gap, up to its rated maximum (max_w). Anything
-        # beyond that can't be the support load and stays unattributed. Allocation across
-        # nameplate estimates is skipped: it would spread the cooling's watts over miners.
-        max_w = overhead.get("max_w")
-        support_w = min(gap, float(max_w)) if max_w else gap
-        rest_w = gap - support_w
-        cap_note = (f" Capped at its rated max of {float(max_w):.0f} W." if max_w else "")
-        row = support_row(
-            overhead["label"], "overhead", "measured (meter minus miners)",
-            "Emporia crypto circuits minus every known home miner." + cap_note +
-            (" " + overhead["note"] if overhead.get("note") else ""),
-            support_w, "measured (Emporia) minus miners" + (", capped at rated max" if rest_w > 0 else ""))
-        row["serves"] = _charge_overhead(rows, row, overhead.get("serves"))
-        info.update(mode="overhead", overhead_label=overhead["label"], overhead_serves=row["serves"],
-                    overhead_w=round(support_w), unattributed_w=round(rest_w))
-        if rest_w > 50:
+    if loads and gap > 0:
+        # Declared loads take the gap in order, each up to its rated maximum (max_w; no
+        # max = whatever is left). Mining support loads (cooling) are charged to the
+        # machines they serve; "mining": false loads (server, workshop) are shown but kept
+        # out of the mining totals. Anything left over stays unattributed. Allocation
+        # across nameplate estimates is skipped: it would spread these watts over miners.
+        remaining = gap
+        info.update(mode="overhead", loads=[])
+        for load in loads:
+            if remaining <= 0:
+                break
+            max_w = load.get("max_w")
+            w = min(remaining, float(max_w)) if max_w else remaining
+            remaining -= w
+            is_mining = load.get("mining", True) is not False
+            basis = ("Emporia crypto circuits minus every known home miner"
+                     + (" and the loads above it" if info["loads"] else "") + "."
+                     + (f" Capped at its rated max of {float(max_w):.0f} W." if max_w else
+                        " Takes whatever is left, so it also absorbs any error in the miners' nameplate watts.")
+                     + (" " + load["note"] if load.get("note") else "")
+                     + ("" if is_mining else " Not mining: excluded from the mining totals."))
+            row = support_row(load["label"], "overhead" if is_mining else "non_mining",
+                              "measured (meter minus miners)" if is_mining else "not mining",
+                              basis, w, "measured (Emporia) minus miners"
+                              + (", capped at rated max" if max_w and w >= float(max_w) else ""))
+            if is_mining:
+                row["serves"] = _charge_overhead(rows, row, load.get("serves"))
+                info.setdefault("overhead_label", load["label"])
+                info.setdefault("overhead_w", round(w))
+            else:
+                row["net_marginal_usd_day"] = row["net_loaded_usd_day"] = None
+                info["non_mining_w"] = info.get("non_mining_w", 0) + round(w)
+            info["loads"].append({"label": load["label"], "watts": round(w), "mining": is_mining})
+        info["unattributed_w"] = round(max(remaining, 0))
+        if remaining > 50:
             support_row("Unattributed home mining power", "unattributed", "measured, no machine",
-                        unattributed_basis + f" This is what's left after {overhead['label']} at "
-                        "its rated max.", rest_w, "measured (Emporia) minus known")
+                        unattributed_basis + " This is what's left after the declared loads.",
+                        remaining, "measured (Emporia) minus known")
     elif measured > 0 and abs(gap) / measured <= ALLOCATE_TOLERANCE and est_sum > 0 and measured > fixed:
         factor = (measured - fixed) / est_sum
         for r in estimated:
@@ -428,12 +448,13 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
                                      rates, btc_usd, home_rate, demand_rate))
     realtime = (accounts.get("electricity:realtime") or {}).get("data")
     home_power = reconcile_home_power(rows, realtime, home_rate, demand_rate, load_overheads())
-    support = ("unattributed", "overhead")
+    support = ("unattributed", "overhead", "non_mining")
     rows.sort(key=lambda r: (r["location"] or "zzz", r["kind"] in support, r["name"].lower()))
     machine_rows = [r for r in rows if r["kind"] not in support]
 
     def total(field):
-        vals = [r[field] for r in rows if r[field] is not None]
+        # Non-mining loads (server, workshop) share the meter but not the mining P&L
+        vals = [r[field] for r in rows if r[field] is not None and r["kind"] != "non_mining"]
         return round(sum(vals), 2) if vals else None
 
     summary = {
