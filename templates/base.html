@@ -19,6 +19,7 @@
         <!-- Wallet nav hidden (Coinbase currently unavailable) -->
         <!-- <a href="/wallet" class="tool-nav-link {% if active_page == 'wallet' %}active{% endif %}">Wallet</a> -->
         <a href="/solar" class="tool-nav-link {% if active_page == 'solar' %}active{% endif %}">Solar Loan</a>
+        {% if energy_url %}<a href="{{ energy_url }}/" class="tool-nav-link">Energy &amp; Solar &rarr;</a>{% endif %}
         {% if session.get('authenticated') %}
         <a href="/logout" class="tool-nav-link" style="margin-left:auto;">Logout</a>
         {% endif %}

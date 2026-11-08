@@ -5,7 +5,7 @@
     <div class="tool-page">
         <div class="tool-page-header">
             <h2>Fleet Now</h2>
-            <p class="tool-desc">What is running, what it's making, and what it costs. Expected earnings use PowerPool's published pay rate &times; pool hashrate; home power uses your marginal rate with demand shown separately.</p>
+            <p class="tool-desc">What is running, what it's making, and what it costs. Expected earnings use PowerPool's published pay rate (or, for Kryptex coins, network share &times; emission &times; price) &times; pool hashrate. Home power uses your marginal rate with demand shown separately, checked against the Emporia meter on the mining circuits.</p>
             <p class="tool-desc" id="fleetUpdated"></p>
         </div>
 
@@ -44,5 +44,5 @@
 {% endblock %}
 
 {% block scripts %}
-    <script src="/static/js/fleet.js?v=1"></script>
+    <script src="/static/js/fleet.js?v=3"></script>
 {% endblock %}

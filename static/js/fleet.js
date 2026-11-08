@@ -90,6 +90,26 @@
         if (sm.rows_missing_cost) {
             card('Missing cost', String(sm.rows_missing_cost), 'machines without watts or rate', 'warn');
         }
+        var hp = sm.home_power;
+        if (hp && hp.measured_w !== null && hp.measured_w !== undefined) {
+            var kw = function (w) { return (w / 1000).toFixed(2) + ' kW'; };
+            var sub = 'Emporia crypto circuits vs ' + kw(hp.accounted_w) + ' from known machines';
+            var cls = '';
+            if (hp.mode === 'allocated') {
+                sub = 'matches known machines; their watts are now allocated from the meter';
+            } else if (hp.mode === 'unattributed gap') {
+                sub = kw(hp.gap_w) + ' not matched to any machine' +
+                    (hp.assumed_off && hp.assumed_off.length
+                        ? ' (still powered? ' + hp.assumed_off.join(', ') + ' report no hashrate)' : '');
+                cls = 'warn';
+            } else if (hp.mode === 'meter stale') {
+                sub = 'meter reading is stale (' + ago(hp.measured_at) + ')';
+                cls = 'warn';
+            } else if (hp.mode === 'meter below estimates') {
+                sub = 'meter is below nameplate estimates (' + kw(hp.accounted_w) + ')';
+            }
+            card('Home mining, measured', kw(hp.measured_w), sub, cls);
+        }
     }
 
     function renderRows(rows) {

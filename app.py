@@ -29,6 +29,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+
+@app.context_processor
+def _sibling_apps():
+    # Links to the other homelab dashboards so the nav works as one front door.
+    # Blank hides the link (e.g. for a public deployment without them).
+    return {"energy_url": os.getenv("ENERGY_DASHBOARD_URL", "https://electricity.homelab.lan")}
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB upload limit
 _env_secret = os.getenv("SECRET_KEY", "")

@@ -153,6 +153,85 @@ def _inventory_only_rows(inventory_miners, inventory_locations, matched_ids, rat
     return out
 
 
+# Emporia readings older than this are not used for allocation
+MEASURED_MAX_AGE_S = 15 * 60
+# Allocate measured watts across estimated machines only when the estimate is this close
+ALLOCATE_TOLERANCE = 0.15
+
+
+def _apply_costs(row, watts, quality, rate, demand_rate, is_home):
+    row["watts"], row["watts_quality"] = watts, quality
+    row["power_usd_day"] = watts / 1000 * 24 * rate if watts is not None and rate is not None else None
+    row["demand_usd_day"] = (watts / 1000 * demand_rate / DAYS_PER_MONTH
+                             if is_home and watts and demand_rate else None)
+    exp, pwr = row.get("expected_usd_day"), row["power_usd_day"]
+    row["net_marginal_usd_day"] = exp - pwr if exp is not None and pwr is not None else None
+    row["net_loaded_usd_day"] = (row["net_marginal_usd_day"] - (row["demand_usd_day"] or 0)
+                                 if row["net_marginal_usd_day"] is not None else None)
+
+
+def reconcile_home_power(rows, realtime, home_rate, demand_rate):
+    """Compare Emporia's measured crypto-circuit watts with the home machines we know.
+
+    - within +/-15%: scale the estimated (nameplate) home machines so the total matches
+      the meter; they become "allocated (Emporia crypto circuits)".
+    - meter higher by more than 15%: leave machines as estimated and add one
+      "Unattributed home mining power" row carrying the gap's cost, so net matches the bill.
+    - meter lower: report only (some machines may be on unmonitored circuits).
+    Returns the summary block; mutates and may append to rows.
+    """
+    home = [r for r in rows if (r.get("location") or "").lower() == "home"
+            and r.get("kind") != "rental_server"]
+    accounted = sum(r["watts"] or 0 for r in home)
+    info = {"measured_w": None, "accounted_w": round(accounted), "gap_w": None,
+            "measured_at": None, "mode": "no meter",
+            # Pool says these aren't hashing, so they're counted at 0 W. If they're still
+            # powered on, their draw is inside the gap (and earning nothing).
+            "assumed_off": [r["name"] for r in home if r.get("watts_quality") == "assumed off"]}
+    if not realtime or realtime.get("crypto_mining_w") is None:
+        return info
+    age = _age_s(realtime.get("measured_at"))
+    measured = float(realtime["crypto_mining_w"])
+    info.update(measured_w=round(measured), measured_at=realtime.get("measured_at"),
+                circuits=realtime.get("circuits") or [])
+    if age is None or age > MEASURED_MAX_AGE_S:
+        info["mode"] = "meter stale"
+        return info
+    gap = measured - accounted
+    info["gap_w"] = round(gap)
+
+    estimated = [r for r in home if r["watts"] and str(r.get("watts_quality") or "").startswith("estimated")]
+    est_sum = sum(r["watts"] for r in estimated)
+    fixed = accounted - est_sum
+    if measured > 0 and abs(gap) / measured <= ALLOCATE_TOLERANCE and est_sum > 0 and measured > fixed:
+        factor = (measured - fixed) / est_sum
+        for r in estimated:
+            _apply_costs(r, r["watts"] * factor, "allocated (Emporia crypto circuits)",
+                         r.get("rate_kwh"), demand_rate, True)
+        info["mode"] = "allocated"
+        info["gap_w"] = 0
+    elif gap > 0:
+        row = {
+            "name": "Unattributed home mining power", "sources": ["emporia"], "kind": "unattributed",
+            "location": "home", "model": None, "in_inventory": False, "running": None,
+            "status": "measured, no machine", "algorithm": None, "hashrate_hs": None,
+            "device_hashrate_hs": None, "rate_kwh": home_rate, "expected_usd_day": None,
+            "expected_basis": ("Emporia crypto circuits minus every known home machine. Usually a "
+                               "machine that is powered but not hashing, or one not in inventory."),
+            "stale_sources": [], "observed_at": realtime.get("measured_at"), "detail": {},
+        }
+        _apply_costs(row, gap, "measured (Emporia) minus known", home_rate, demand_rate, True)
+        # Its net is just its cost: nothing earns from it
+        if row["power_usd_day"] is not None:
+            row["net_marginal_usd_day"] = -row["power_usd_day"]
+            row["net_loaded_usd_day"] = -(row["power_usd_day"] + (row["demand_usd_day"] or 0))
+        rows.append(row)
+        info["mode"] = "unattributed gap"
+    else:
+        info["mode"] = "meter below estimates"
+    return info
+
+
 def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
     data = store.read_all()
     intervals = _intervals()
@@ -278,24 +357,29 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
 
     rows.extend(_inventory_only_rows(inventory_miners, inventory_locations, matched_inventory_ids,
                                      rates, btc_usd, home_rate, demand_rate))
-    rows.sort(key=lambda r: (r["location"] or "zzz", r["name"].lower()))
+    realtime = (accounts.get("electricity:realtime") or {}).get("data")
+    home_power = reconcile_home_power(rows, realtime, home_rate, demand_rate)
+    rows.sort(key=lambda r: (r["location"] or "zzz", r["kind"] == "unattributed", r["name"].lower()))
+    machine_rows = [r for r in rows if r["kind"] != "unattributed"]
 
     def total(field):
         vals = [r[field] for r in rows if r[field] is not None]
         return round(sum(vals), 2) if vals else None
 
     summary = {
-        "machines": len(rows),
-        "running": sum(1 for r in rows if r["running"] is True),
-        "not_running": sum(1 for r in rows if r["running"] is False),
-        "unknown": sum(1 for r in rows if r["running"] is None),
+        "machines": len(machine_rows),
+        "running": sum(1 for r in machine_rows if r["running"] is True),
+        "not_running": sum(1 for r in machine_rows if r["running"] is False),
+        "unknown": sum(1 for r in machine_rows if r["running"] is None),
         "expected_usd_day": total("expected_usd_day"),
         "power_usd_day": total("power_usd_day"),
         "demand_usd_day": total("demand_usd_day"),
         "net_marginal_usd_day": total("net_marginal_usd_day"),
         "net_loaded_usd_day": total("net_loaded_usd_day"),
         "rows_no_live_source": sum(1 for r in rows if r["sources"] == ["inventory"]),
-        "rows_missing_cost": sum(1 for r in rows if r["power_usd_day"] is None and r["kind"] != "rental_server"),
+        "rows_missing_cost": sum(1 for r in machine_rows
+                                 if r["power_usd_day"] is None and r["kind"] != "rental_server"),
+        "home_power": home_power,
         "btc_usd": btc_usd,
         "home_rate_kwh": home_rate,
         "demand_rate_kw_month": demand_rate,
@@ -303,7 +387,8 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
 
     account_view = []
     for a in data["accounts"]:
-        if a["account_key"] in ("powerpool:payrates", "electricity:rates", "kryptex:rates"):
+        if a["account_key"] in ("powerpool:payrates", "electricity:rates", "electricity:realtime",
+                                "kryptex:rates"):
             continue
         d = a["data"]
         item = {"account": a["account_key"], "source": a["source"], "fetched_at": a["fetched_at"], "data": d}
