@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 
 from fleet import store
 from fleet.adapters import all_adapters
+from fleet.units import to_hs
 
 # Device sources describe the machine itself; pool sources describe its hashing
 DEVICE_PRIORITY = ("lan", "foreman", "clore")
@@ -72,6 +73,86 @@ def _inventory_index(inventory_miners, inventory_locations):
     return index
 
 
+def _match_inventory(index: dict, name: str):
+    """Find the inventory entry for a source's machine name.
+
+    Mirrors PowerPoolService.match_worker_to_miner so /fleet and the main dashboard
+    agree (e.g. worker "S21Hosted1" -> inventory "S21Hosted"): exact normalized name or
+    powerpool_worker_key first, then containment when the shorter name is >= 70% of
+    the longer one.
+    """
+    key = norm(name)
+    if not key:
+        return None
+    if key in index:
+        return index[key]
+    for inv_key, entry in index.items():
+        shorter, longer = sorted([key, inv_key], key=len)
+        if shorter and len(shorter) / len(longer) >= 0.7 and shorter in longer:
+            return entry
+    return None
+
+
+def _inventory_only_rows(inventory_miners, inventory_locations, matched_ids, rates, btc_usd,
+                         home_rate, demand_rate) -> list[dict]:
+    """Active inventory machines that no live source reports (e.g. the CircleHash S21+ Hyd,
+    which mines to CircleHash's own AntPool account). Shown with clearly labelled estimates
+    instead of silently disappearing from the totals."""
+    locations = {l.get("id"): l for l in inventory_locations or []}
+    out = []
+    for inv in inventory_miners or []:
+        if inv.get("id") in matched_ids or (inv.get("status") or "active") != "active":
+            continue
+        loc = locations.get(inv.get("location_id"), {})
+        location = loc.get("name")
+        is_home = (location or "").lower() == "home"
+        qty = inv.get("quantity") or 1
+        algorithm = norm_algo(inv.get("algorithm"))
+        hs = to_hs(inv.get("hashrate"), inv.get("hashrate_unit") or "")
+        hashrate = hs * qty if hs is not None else None
+        watts = float(inv["wattage"]) * qty if inv.get("wattage") else None
+        rate = home_rate if is_home else loc.get("electricity_cost_kwh")
+
+        expected_usd, expected_basis = None, "no live source and no pay rate for this algorithm"
+        rate_info = rates.get(algorithm)
+        if hashrate and rate_info and btc_usd:
+            expected_usd = hashrate * rate_info["btc_per_hs_day"] * btc_usd
+            expected_basis = ("ESTIMATE, no live source: inventory rated hashrate x PowerPool "
+                              f"{rate_info['units']} pay rate (check the host's own dashboard)")
+        power_usd = watts / 1000 * 24 * rate if watts is not None and rate is not None else None
+        demand_usd = (watts / 1000 * demand_rate / DAYS_PER_MONTH
+                      if is_home and watts and demand_rate else None)
+        net_marginal = (expected_usd - power_usd
+                        if expected_usd is not None and power_usd is not None else None)
+        out.append({
+            "name": inv.get("name"),
+            "sources": ["inventory"],
+            "kind": "asic",
+            "location": location,
+            "model": inv.get("model"),
+            "in_inventory": True,
+            "running": None,
+            "status": "no live source",
+            "algorithm": algorithm,
+            "hashrate_hs": hashrate,
+            "device_hashrate_hs": None,
+            "watts": watts,
+            "watts_quality": "estimated (nameplate)" if watts is not None else None,
+            "rate_kwh": rate,
+            "expected_usd_day": expected_usd,
+            "expected_basis": expected_basis,
+            "power_usd_day": power_usd,
+            "demand_usd_day": demand_usd,
+            "net_marginal_usd_day": net_marginal,
+            "net_loaded_usd_day": (net_marginal - (demand_usd or 0)
+                                   if net_marginal is not None else None),
+            "stale_sources": [],
+            "observed_at": None,
+            "detail": {"inventory": {"notes": inv.get("notes")}},
+        })
+    return out
+
+
 def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
     data = store.read_all()
     intervals = _intervals()
@@ -83,7 +164,9 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
     elec = (accounts.get("electricity:rates") or {}).get("data", {})
     home_rate = elec.get("marginal_energy_rate")
     demand_rate = elec.get("demand_rate_with_tax")
+    kryptex_rates = (accounts.get("kryptex:rates") or {}).get("data", {}).get("rates", {})
     inventory = _inventory_index(inventory_miners, inventory_locations)
+    matched_inventory_ids = set()
 
     # Group rows from different sources that describe the same machine (by name)
     groups: dict[str, list[dict]] = {}
@@ -97,7 +180,9 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
         device = next((by_source[s] for s in DEVICE_PRIORITY if s in by_source), None)
         pool = next((by_source[s] for s in POOL_SOURCES if s in by_source), None)
         primary = device or pool
-        inv = inventory.get(norm(primary["name"]))
+        inv = _match_inventory(inventory, primary["name"])
+        if inv:
+            matched_inventory_ids.add(inv.get("id"))
 
         stale = []
         for m in members:
@@ -115,9 +200,11 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
             status = "running" if running else ((device or pool).get("status") or "not running")
 
         algorithm = None
+        kryptex_coin = None
         if pool:
             algorithm = pool.get("algorithm")
             if pool["source"] == "kryptex":
+                kryptex_coin = algorithm
                 algorithm = KRYPTEX_COIN_ALGO.get(algorithm, algorithm)
         if not algorithm and inv:
             algorithm = norm_algo(inv.get("algorithm"))
@@ -144,8 +231,14 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
         expected_usd = None
         expected_basis = None
         rate_info = rates.get(algorithm or "")
+        kx_rate = kryptex_rates.get(kryptex_coin or "")
         if device and device["source"] == "clore":
             expected_basis = "rental price shown in detail (renter price, before Clore fees)"
+        elif hashrate and kx_rate:
+            # The coin actually mined, at Kryptex's network hashrate, emission, fee and price
+            expected_usd = hashrate * kx_rate["usd_per_hs_day"]
+            expected_basis = (f"Kryptex {kryptex_coin.upper()}: hashrate / network x daily emission"
+                              f" x (1 - fee) x ${kx_rate['price_usd']:.4g}")
         elif hashrate and rate_info and btc_usd:
             expected_usd = hashrate * rate_info["btc_per_hs_day"] * btc_usd
             expected_basis = f"PowerPool pay rate ({rate_info['units']}) x pool hashrate"
@@ -183,6 +276,8 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
             "detail": {m["source"]: m.get("extra") for m in members},
         })
 
+    rows.extend(_inventory_only_rows(inventory_miners, inventory_locations, matched_inventory_ids,
+                                     rates, btc_usd, home_rate, demand_rate))
     rows.sort(key=lambda r: (r["location"] or "zzz", r["name"].lower()))
 
     def total(field):
@@ -199,6 +294,7 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
         "demand_usd_day": total("demand_usd_day"),
         "net_marginal_usd_day": total("net_marginal_usd_day"),
         "net_loaded_usd_day": total("net_loaded_usd_day"),
+        "rows_no_live_source": sum(1 for r in rows if r["sources"] == ["inventory"]),
         "rows_missing_cost": sum(1 for r in rows if r["power_usd_day"] is None and r["kind"] != "rental_server"),
         "btc_usd": btc_usd,
         "home_rate_kwh": home_rate,
@@ -207,7 +303,7 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
 
     account_view = []
     for a in data["accounts"]:
-        if a["account_key"] in ("powerpool:payrates", "electricity:rates"):
+        if a["account_key"] in ("powerpool:payrates", "electricity:rates", "kryptex:rates"):
             continue
         d = a["data"]
         item = {"account": a["account_key"], "source": a["source"], "fetched_at": a["fetched_at"], "data": d}
@@ -216,7 +312,8 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
             last7 = sorted(d.get("daily_rewards") or [], key=lambda p: p.get("date") or 0)[-7:]
             reward7 = sum(p.get("reward") or 0 for p in last7)
             item["actual_last_7d_coin"] = reward7
-            item["actual_last_7d_usd"] = reward7 * prices[coin] if coin in prices else None
+            price = prices.get(coin) or (kryptex_rates.get(coin.lower()) or {}).get("price_usd")
+            item["actual_last_7d_usd"] = reward7 * price if price else None
         account_view.append(item)
 
     return {

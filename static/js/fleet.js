@@ -75,14 +75,18 @@
             ]));
         }
         card('Machines', sm.running + ' running', sm.not_running + ' stopped, ' + sm.unknown + ' unknown');
-        card('Expected', money(sm.expected_usd_day) + '/day', 'pool pay rate x hashrate');
+        card('Expected', money(sm.expected_usd_day) + '/day',
+            sm.rows_no_live_source ? 'includes ' + sm.rows_no_live_source + ' estimated (no live source)'
+                                   : 'pool pay rate x hashrate');
         card('Power', money(sm.power_usd_day) + '/day',
             sm.home_rate_kwh ? 'home $' + sm.home_rate_kwh.toFixed(4) + '/kWh' : 'home rate unavailable');
         card('Demand share', money(sm.demand_usd_day) + '/day',
             sm.demand_rate_kw_month ? '$' + sm.demand_rate_kw_month.toFixed(2) + '/kW-month' : '');
         var net = sm.net_loaded_usd_day;
         card('Net incl. demand', money(net) + '/day',
-            'before demand ' + money(sm.net_marginal_usd_day), net !== null && net < 0 ? 'neg' : 'pos');
+            'before demand ' + money(sm.net_marginal_usd_day) +
+            (sm.rows_missing_cost ? ' (only machines with a known cost)' : ''),
+            net !== null && net < 0 ? 'neg' : 'pos');
         if (sm.rows_missing_cost) {
             card('Missing cost', String(sm.rows_missing_cost), 'machines without watts or rate', 'warn');
         }
