@@ -13,3 +13,8 @@ __pycache__/
 .venv/
 venv/
 deploy-update.sh
+# Poller-only secrets: passed at runtime via env_file, never baked into the image
+fleet.env
+fleet.env.*
+!fleet.env.example
+*.bak*
