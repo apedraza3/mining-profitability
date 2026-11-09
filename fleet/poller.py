@@ -8,7 +8,7 @@ where the view marks it stale. One source failing never stops the others.
 import logging
 import time
 
-from fleet import store
+from fleet import history, store
 from fleet.adapters import all_adapters
 
 logger = logging.getLogger("fleet.poller")
@@ -49,6 +49,8 @@ def main():
     next_run = {a.name: 0.0 for a in adapters}
     failures = {a.name: 0 for a in adapters}
     next_purge = time.monotonic() + PURGE_EVERY_S
+    # First snapshot after every source has had a chance to report once
+    next_snapshot = time.monotonic() + 90
     logger.info("Fleet poller started with sources: %s", ", ".join(a.name for a in adapters))
 
     while True:
@@ -65,6 +67,12 @@ def main():
             except Exception as e:
                 logger.warning("Sample purge failed: %s", e)
             next_purge = now + PURGE_EVERY_S
+        if now >= next_snapshot:
+            try:
+                history.take_snapshot()
+            except Exception as e:  # history is nice to have; never stop polling for it
+                logger.warning("Fleet snapshot failed: %s", e)
+            next_snapshot = now + history.SNAPSHOT_EVERY_S
         time.sleep(TICK_S)
 
 

@@ -1,4 +1,8 @@
 {
+  "pdu_circuits": {
+    "apc:Bank 1": ["Z11-1", "Z11-2"],
+    "chatsworth:CB2": ["Z15"]
+  },
   "home": [
     {
       "label": "Immersion pump + dry cooler",

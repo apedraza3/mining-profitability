@@ -13,8 +13,11 @@ load_dotenv()
 load_dotenv("fleet.env")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-# Non-mining loads on the metered crypto circuits (cooling etc.), edited by the owner:
-# {"home": {"label": "Immersion pump + dry cooler", "serves": ["Z15"]}}
+# Owner-edited: support loads on the metered crypto circuits and which PDU circuit feeds
+# which machines. See data/fleet_overheads.example.json:
+# {"pdu_circuits": {"apc:Bank 1": ["Z11-1"]},
+#  "home": [{"label": "Immersion pump + dry cooler", "serves": ["Z15"], "max_w": 2500,
+#            "pdu": "chatsworth:CB1"}, {"label": "Server + workshop", "mining": false}]}
 FLEET_OVERHEADS = Path(os.getenv("FLEET_OVERHEADS", str(BASE_DIR / "data" / "fleet_overheads.json")))
 TELEMETRY_DB = Path(os.getenv("FLEET_DB", str(BASE_DIR / "data" / "telemetry.db")))
 

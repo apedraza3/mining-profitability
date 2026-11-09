@@ -89,6 +89,16 @@ For miners with solar panels, the dashboard calculates:
 - Demand charge impact (peak kW tracking with high-water mark per billing cycle)
 - Solar loan ROI analysis — net monthly savings vs loan payment, lifetime value projection
 
+### Fleet Now (live fleet monitor, `/fleet`)
+One page for the whole fleet, home and hosted: what is running, its hashrate, real watts, expected vs actual earnings, power and demand cost, solar credit and net profit. Every number says where it came from (measured, reported, allocated, estimated).
+
+- **Sources**, polled by a separate `fleet-poller` container: PowerPool workers and pay rates, Kryptex (public wallet API), home ASICs over the LAN (cgminer API on TCP 4028, incl. chip temps), the electricity dashboard (marginal rate, demand rate, Emporia circuits, solar), networked rack PDUs over SNMPv2c (Chatsworth eConnect, APC rPDU2), plus optional Foreman and Clore.ai.
+- **Power reconciliation**: the Emporia reading for the mining circuits is checked against the known machines. Declared loads on the same panel (immersion pumps and dry coolers, a server, a workshop) take the gap in order, each capped at its rated maximum; cooling is charged to the machines it serves, and non-mining loads are shown but kept out of the mining totals.
+- **PDU circuits**: map a PDU breaker or bank to the machines plugged into it and their watts become measured instead of nameplate. A declared load can also point at a circuit (`"pdu": "<pdu>:<branch>"`).
+- **History**: the poller stores a snapshot of the totals every 5 minutes (meter, miners, solar, each PDU, expected, net) and the page charts 24 h / 7 days / 30 days.
+
+Owner-specific loads and circuit mapping live in `data/fleet_overheads.json` (gitignored; see `data/fleet_overheads.example.json`). Source credentials live in `fleet.env` (see `fleet.env.example`), which only the poller loads and which is kept out of the image.
+
 ## Profitability Calculation
 
 The engine calculates per-miner profitability with all costs factored in:
@@ -254,6 +264,14 @@ mining-profitability/
 │   ├── history_service.py      # SQLite (11 tables) time-series + config
 │   ├── cache_manager.py        # TTL file cache
 │   └── power_import.py         # CSV power data parser
+├── fleet/                      # Fleet Now
+│   ├── poller.py               # Poller container entry point
+│   ├── adapters/               # One per source (powerpool, kryptex, lan, pdu, ...)
+│   ├── snmp.py                 # Minimal read-only SNMPv2c client
+│   ├── store.py                # telemetry.db (latest state, samples, snapshots)
+│   ├── view.py                 # Merges sources, costs, power reconciliation
+│   └── history.py              # Snapshots for the history charts
+├── tests/test_fleet.py         # unittest suite for fleet math and parsers
 ├── templates/                  # Jinja2 HTML templates
 │   ├── base.html               # Nav + layout
 │   ├── index.html              # Main dashboard
@@ -285,6 +303,10 @@ Three daemon threads run alongside the Flask server:
 - **Uptime Tracker** — polls PowerPool every 5 minutes, records miner online/offline status and hashrate to SQLite, triggers alert checks
 - **Profit Snapshots** — records daily profit per miner (throttled to once per hour)
 - **Auto-Pause Monitor** — checks miner profitability against strike price thresholds, controls smart PDU outlets
+
+Separately, the **`fleet-poller` container** (`python -m fleet.poller`) runs every Fleet Now source on its own interval with backoff, writes `data/telemetry.db` (the web app only reads it) and saves a fleet snapshot every 5 minutes. It only reads from rack PDUs (SNMP GET, never SET).
+
+Tests for the Fleet Now math and parsers: `python -m unittest discover -s tests`.
 
 ## Tech Stack
 

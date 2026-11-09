@@ -252,6 +252,18 @@ def fleet_api():
     return jsonify(build_fleet(inventory_mgr.get_all_miners(), inventory_mgr.get_all_locations()))
 
 
+@app.route("/api/fleet/history", methods=["GET"])
+@login_required
+def fleet_history_api():
+    """Fleet totals over time (snapshots written by the poller every 5 minutes)."""
+    from fleet.history import series
+    try:
+        hours = int(request.args.get("hours", 24))
+    except ValueError:
+        return jsonify({"error": "hours must be a whole number"}), 400
+    return jsonify(series(hours))
+
+
 # ---- Miners API ----
 
 @app.route("/api/miners", methods=["GET"])

@@ -54,6 +54,12 @@ CREATE TABLE IF NOT EXISTS samples (
     running INTEGER,
     PRIMARY KEY (machine_key, ts)
 ) WITHOUT ROWID;
+
+-- Fleet-wide totals every few minutes (meter, PDUs, solar, $/day), for the history charts
+CREATE TABLE IF NOT EXISTS fleet_snapshots (
+    ts TEXT PRIMARY KEY,
+    data TEXT NOT NULL              -- JSON, see fleet.history.compact()
+) WITHOUT ROWID;
 """
 
 
@@ -163,6 +169,26 @@ def purge_samples():
     cutoff = (datetime.now(timezone.utc) - timedelta(days=settings.SAMPLE_RETENTION_DAYS)).isoformat()
     with connect() as conn:
         conn.execute("DELETE FROM samples WHERE ts < ?", (cutoff,))
+        conn.execute("DELETE FROM fleet_snapshots WHERE ts < ?", (cutoff,))
+
+
+def record_snapshot(data: dict, ts: str | None = None):
+    with connect() as conn:
+        conn.execute("INSERT OR REPLACE INTO fleet_snapshots (ts, data) VALUES (?, ?)",
+                     (ts or utcnow(), json.dumps(data)))
+
+
+def read_snapshots(since_iso: str) -> list[dict]:
+    """[{"ts", **data}] since the given time, oldest first. Empty before the first one."""
+    with connect(readonly=True) as conn:
+        if conn is None:
+            return []
+        try:
+            rows = conn.execute("SELECT ts, data FROM fleet_snapshots WHERE ts >= ? ORDER BY ts",
+                                (since_iso,)).fetchall()
+        except sqlite3.OperationalError:
+            return []
+    return [{"ts": r["ts"], **json.loads(r["data"])} for r in rows]
 
 
 def read_all() -> dict:

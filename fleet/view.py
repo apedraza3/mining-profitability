@@ -206,7 +206,94 @@ def _charge_overhead(rows, overhead_row, serves):
     return [r["name"] for r in served]
 
 
-def reconcile_home_power(rows, realtime, home_rate, demand_rate, overheads=None):
+# PDU readings older than this are not used as machine watts
+PDU_MAX_AGE_S = 5 * 60
+
+
+def pdu_circuit_readings(pdu_accounts) -> dict:
+    """{"<pdu>:<branch>": {"watts", "unit", "fresh"}} from the pdu:* accounts.
+
+    "<pdu>:total" is the whole PDU. Branches without a watts column (Chatsworth
+    CPI-UNITY, APC banks) are VA; server PSUs run at PF ~0.99, so VA is used as W
+    and the quality label says so.
+    """
+    out = {}
+    for a in pdu_accounts:
+        d = a.get("data") or {}
+        name = d.get("name")
+        if not name or d.get("error"):
+            continue
+        age = _age_s(a.get("fetched_at"))
+        fresh = age is not None and age <= PDU_MAX_AGE_S
+        total_unit = "VA" if "VA" in (d.get("power_kind") or "") else "W"
+        if d.get("total_w") is not None:
+            out[f"{name}:total"] = {"watts": float(d["total_w"]), "unit": total_unit, "fresh": fresh}
+        for b in d.get("branches") or []:
+            if b.get("watts") is not None:
+                out[f"{name}:{b['branch']}"] = {"watts": float(b["watts"]), "unit": "W", "fresh": fresh}
+            elif b.get("va") is not None:
+                out[f"{name}:{b['branch']}"] = {"watts": float(b["va"]), "unit": "VA", "fresh": fresh}
+    return out
+
+
+def _circuit_key(raw: str) -> str:
+    return norm(raw.split(":", 1)[0]) + ":" + norm(raw.split(":", 1)[1]) if ":" in (raw or "") else norm(raw)
+
+
+def _find_circuit(readings: dict, wanted: str):
+    target = _circuit_key(wanted)
+    for key, value in readings.items():
+        if _circuit_key(key) == target:
+            return key, value
+    return None, None
+
+
+def apply_pdu_circuits(rows, readings, circuits, home_rate, demand_rate) -> list[dict]:
+    """Replace nameplate watts with PDU-measured watts for machines on a mapped circuit.
+
+    ``circuits`` comes from fleet_overheads.json: {"apc:Bank 1": ["Z11-1", "Z11-2"]}.
+    A circuit's reading is split across its running machines by their current watts
+    (nameplate), or equally when none are known. Machines reported off keep 0 W; if
+    the circuit still draws power, that's listed as unassigned on the circuit.
+    """
+    info = []
+    for circuit, names in (circuits or {}).items():
+        if not isinstance(names, list):
+            continue
+        key, reading = _find_circuit(readings, circuit)
+        entry = {"circuit": circuit, "machines": names, "watts": None, "unit": None,
+                 "applied_to": [], "unassigned_w": 0, "state": "no reading"}
+        info.append(entry)
+        if not reading:
+            continue
+        entry.update(watts=round(reading["watts"]), unit=reading["unit"])
+        if not reading["fresh"]:
+            entry["state"] = "stale"
+            continue
+        wanted = {norm(n) for n in names}
+        members = [r for r in rows if norm(r["name"]) in wanted
+                   and r.get("kind") not in ("overhead", "unattributed", "non_mining")]
+        drawing = [r for r in members if r.get("running") is not False]
+        if not drawing:
+            entry["state"] = "no running machine"
+            entry["unassigned_w"] = round(reading["watts"])
+            continue
+        basis = sum(r["watts"] or 0 for r in drawing)
+        for r in drawing:
+            share = (r["watts"] or 0) / basis if basis else 1 / len(drawing)
+            quality = f"measured (PDU {key}" + (", VA" if reading["unit"] == "VA" else "") + \
+                      (", split by nameplate" if len(drawing) > 1 else "") + ")"
+            rate = r.get("rate_kwh")
+            if rate is None and (r.get("location") or "").lower() == "home":
+                rate = home_rate
+            _apply_costs(r, reading["watts"] * share, quality, rate, demand_rate,
+                         (r.get("location") or "").lower() == "home")
+            entry["applied_to"].append(r["name"])
+        entry["state"] = "applied"
+    return info
+
+
+def reconcile_home_power(rows, realtime, home_rate, demand_rate, overheads=None, readings=None):
     """Compare Emporia's measured crypto-circuit watts with the home machines we know.
 
     - within +/-15%: scale the estimated (nameplate) home machines so the total matches
@@ -241,6 +328,16 @@ def reconcile_home_power(rows, realtime, home_rate, demand_rate, overheads=None)
     declared = (overheads or {}).get("home") or []
     loads = [declared] if isinstance(declared, dict) else [l for l in declared if isinstance(l, dict)]
     loads = [l for l in loads if l.get("label")]
+    # A load with "pdu": "chatsworth:CB1" uses that circuit's reading instead of taking
+    # a share of the gap. Measured loads are subtracted first, so the gap left for the
+    # unmeasured ones (and for "unexplained") is as small as possible.
+    for load in loads:
+        load.pop("_measured", None)
+        if load.get("pdu") and readings:
+            key, reading = _find_circuit(readings, load["pdu"])
+            if reading and reading["fresh"]:
+                load["_measured"] = (key, reading)
+    loads.sort(key=lambda l: "_measured" not in l)
     estimated = [r for r in home if r["watts"] and str(r.get("watts_quality") or "").startswith("estimated")]
     est_sum = sum(r["watts"] for r in estimated)
     fixed = accounted - est_sum
@@ -263,7 +360,7 @@ def reconcile_home_power(rows, realtime, home_rate, demand_rate, overheads=None)
     unattributed_basis = ("Emporia crypto circuits minus every known home machine. Usually a "
                           "machine that is powered but not hashing, one not in inventory, or "
                           "miners drawing more than their nameplate watts.")
-    if loads and gap > 0:
+    if loads and (gap > 0 or any("_measured" in l for l in loads)):
         # Declared loads take the gap in order, each up to its rated maximum (max_w; no
         # max = whatever is left). Mining support loads (cooling) are charged to the
         # machines they serve; "mining": false loads (server, workshop) are shown but kept
@@ -272,22 +369,33 @@ def reconcile_home_power(rows, realtime, home_rate, demand_rate, overheads=None)
         remaining = gap
         info.update(mode="overhead", loads=[])
         for load in loads:
-            if remaining <= 0:
+            measured_load = load.get("_measured")
+            if remaining <= 0 and not measured_load:
                 break
             max_w = load.get("max_w")
-            w = min(remaining, float(max_w)) if max_w else remaining
-            remaining -= w
             is_mining = load.get("mining", True) is not False
-            basis = ("Emporia crypto circuits minus every known home miner"
-                     + (" and the loads above it" if info["loads"] else "") + "."
-                     + (f" Capped at its rated max of {float(max_w):.0f} W." if max_w else
-                        " Takes whatever is left, so it also absorbs any error in the miners' nameplate watts.")
-                     + (" " + load["note"] if load.get("note") else "")
-                     + ("" if is_mining else " Not mining: excluded from the mining totals."))
+            if measured_load:
+                key, reading = measured_load
+                w = reading["watts"]
+                quality = f"measured (PDU {key}" + (", VA" if reading["unit"] == "VA" else "") + ")"
+                status = "measured (PDU)" if is_mining else "not mining"
+                basis = (f"Measured on PDU circuit {key}."
+                         + (" " + load["note"] if load.get("note") else "")
+                         + ("" if is_mining else " Not mining: excluded from the mining totals."))
+            else:
+                w = min(remaining, float(max_w)) if max_w else remaining
+                quality = ("measured (Emporia) minus miners"
+                           + (", capped at rated max" if max_w and w >= float(max_w) else ""))
+                status = "measured (meter minus miners)" if is_mining else "not mining"
+                basis = ("Emporia crypto circuits minus every known home miner"
+                         + (" and the loads above it" if info["loads"] else "") + "."
+                         + (f" Capped at its rated max of {float(max_w):.0f} W." if max_w else
+                            " Takes whatever is left, so it also absorbs any error in the miners' nameplate watts.")
+                         + (" " + load["note"] if load.get("note") else "")
+                         + ("" if is_mining else " Not mining: excluded from the mining totals."))
+            remaining -= w
             row = support_row(load["label"], "overhead" if is_mining else "non_mining",
-                              "measured (meter minus miners)" if is_mining else "not mining",
-                              basis, w, "measured (Emporia) minus miners"
-                              + (", capped at rated max" if max_w and w >= float(max_w) else ""))
+                              status, basis, w, quality)
             if is_mining:
                 row["serves"] = _charge_overhead(rows, row, load.get("serves"))
                 info.setdefault("overhead_label", load["label"])
@@ -295,7 +403,9 @@ def reconcile_home_power(rows, realtime, home_rate, demand_rate, overheads=None)
             else:
                 row["net_marginal_usd_day"] = row["net_loaded_usd_day"] = None
                 info["non_mining_w"] = info.get("non_mining_w", 0) + round(w)
-            info["loads"].append({"label": load["label"], "watts": round(w), "mining": is_mining})
+            info["loads"].append({"label": load["label"], "watts": round(w), "mining": is_mining,
+                                  "measured": bool(measured_load)})
+            load.pop("_measured", None)
         info["unattributed_w"] = round(max(remaining, 0))
         if remaining > 50:
             support_row("Unattributed home mining power", "unattributed", "measured, no machine",
@@ -477,7 +587,12 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
     rows.extend(_inventory_only_rows(inventory_miners, inventory_locations, matched_inventory_ids,
                                      rates, btc_usd, home_rate, demand_rate))
     realtime = (accounts.get("electricity:realtime") or {}).get("data")
-    home_power = reconcile_home_power(rows, realtime, home_rate, demand_rate, load_overheads())
+    overheads = load_overheads()
+    pdu_accounts = [a for a in data["accounts"] if a["account_key"].startswith("pdu:")]
+    readings = pdu_circuit_readings(pdu_accounts)
+    pdu_circuits = apply_pdu_circuits(rows, readings, overheads.get("pdu_circuits"),
+                                      home_rate, demand_rate)
+    home_power = reconcile_home_power(rows, realtime, home_rate, demand_rate, overheads, readings)
     support = ("unattributed", "overhead", "non_mining")
     rows.sort(key=lambda r: (r["location"] or "zzz", r["kind"] in support, r["name"].lower()))
     machine_rows = [r for r in rows if r["kind"] not in support]
@@ -505,7 +620,8 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
         "pdus": [{k: a["data"].get(k) for k in ("name", "host", "total_w", "power_kind", "peak_w",
                                                   "energy_kwh", "branches", "error", "sys_name")}
                  | {"fetched_at": a["fetched_at"]}
-                 for a in data["accounts"] if a["account_key"].startswith("pdu:")],
+                 for a in pdu_accounts],
+        "pdu_circuits": pdu_circuits,
         "btc_usd": btc_usd,
         "home_rate_kwh": home_rate,
         "demand_rate_kw_month": demand_rate,

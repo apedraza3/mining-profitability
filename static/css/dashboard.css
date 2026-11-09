@@ -951,3 +951,9 @@ body {
 .fleet-account { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
 .fleet-line { font-size: 0.82rem; margin-top: 4px; word-break: break-word; }
 .muted { color: var(--text-muted); }
+.fleet-history-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.fleet-range { display: flex; gap: 6px; }
+.fleet-range button { background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; font-size: 0.8rem; cursor: pointer; }
+.fleet-range button.active { color: var(--text); border-color: var(--primary); }
+.fleet-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-top: 8px; }
+.fleet-chart { position: relative; height: 260px; min-width: 0; }

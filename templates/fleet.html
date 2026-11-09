@@ -14,6 +14,22 @@
         <div class="fleet-summary" id="fleetSummary"></div>
 
         <div class="analysis-panel">
+            <div class="fleet-history-head">
+                <h3 class="fleet-h3">History</h3>
+                <div class="fleet-range" id="fleetRange">
+                    <button type="button" data-hours="24" class="active">24 h</button>
+                    <button type="button" data-hours="168">7 days</button>
+                    <button type="button" data-hours="720">30 days</button>
+                </div>
+            </div>
+            <p class="fleet-meta" id="fleetHistoryNote"></p>
+            <div class="fleet-charts">
+                <div class="fleet-chart"><canvas id="fleetPowerChart" aria-label="Power over time"></canvas></div>
+                <div class="fleet-chart"><canvas id="fleetMoneyChart" aria-label="Dollars per day over time"></canvas></div>
+            </div>
+        </div>
+
+        <div class="analysis-panel">
             <div class="fleet-table-wrap">
                 <table class="fleet-table">
                     <thead>
@@ -44,5 +60,5 @@
 {% endblock %}
 
 {% block scripts %}
-    <script src="/static/js/fleet.js?v=8"></script>
+    <script src="/static/js/fleet.js?v=9"></script>
 {% endblock %}
