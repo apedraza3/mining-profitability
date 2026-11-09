@@ -75,7 +75,10 @@ def read_chatsworth(host: str, community: str) -> dict:
         idx = oid.rsplit(f"{CPI}.1.10.1.3.110.1.6.", 1)[-1]
         a = amps.get(f"{CPI}.1.10.1.3.110.1.3.{idx}")
         v = volts.get(f"{CPI}.1.10.1.3.110.1.5.{idx}")
-        branches.append({"branch": idx, "va": value,
+        # Index is "<branch>.<len>.<PDU MAC as ASCII codes>" (daisy-chain key); the
+        # first component is the breaker number the PDU's own UI shows as CB1, CB2, ...
+        label = f"CB{idx.split('.', 1)[0]}"
+        branches.append({"branch": label, "va": value,
                          "amps": a / 100 if isinstance(a, int) and a >= 0 else None,
                          "volts": v / 10 if isinstance(v, int) and v >= 0 else None})
     total = snmp.walk(host, community, f"{CPI}.1.10.1.2.10.1.16")
