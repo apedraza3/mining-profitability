@@ -17,7 +17,9 @@ from fleet.adapters import all_adapters
 from fleet.units import to_hs
 
 # Device sources describe the machine itself; pool sources describe its hashing
-DEVICE_PRIORITY = ("lan", "foreman", "clore")
+DEVICE_PRIORITY = ("lan", "foreman", "clore", "vast")
+# GPU rental marketplaces: one row per listed server, keyed by source (not merged by name)
+RENTAL_SOURCES = ("clore", "vast")
 POOL_SOURCES = ("powerpool", "kryptex")
 KRYPTEX_COIN_ALGO = {"btc": "sha256", "ltc": "scrypt", "doge": "scrypt", "kas": "kheavyhash"}
 DAYS_PER_MONTH = 30.4
@@ -469,13 +471,14 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
     home_rate = elec.get("marginal_energy_rate")
     demand_rate = elec.get("demand_rate_with_tax")
     kryptex_rates = (accounts.get("kryptex:rates") or {}).get("data", {}).get("rates", {})
-    inventory = _inventory_index(inventory_miners, inventory_locations)
+    vast_earnings = (accounts.get("vast:earnings") or {}).get("data", {})
+    inventory =_inventory_index(inventory_miners, inventory_locations)
     matched_inventory_ids = set()
 
     # Group rows from different sources that describe the same machine (by name)
     groups: dict[str, list[dict]] = {}
     for m in data["machines"]:
-        key = f"clore:{m['name']}" if m["source"] == "clore" else norm(m["name"])
+        key = (f"{m['source']}:{m['name']}" if m["source"] in RENTAL_SOURCES else norm(m["name"]))
         groups.setdefault(key, []).append(m)
 
     rows = []
@@ -496,7 +499,7 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
 
         running = device.get("running") if device and device.get("running") is not None else (
             pool.get("running") if pool else None)
-        if device and device["source"] == "clore":
+        if device and device["source"] in RENTAL_SOURCES:
             status = device.get("status")
         elif running is None:
             status = (device or pool).get("status") or "unknown"
@@ -519,6 +522,9 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
             hashrate = device.get("hashrate_hs")
 
         location = (device or {}).get("location") or (inv or {}).get("_location", {}).get("name")
+        if device and device["source"] in RENTAL_SOURCES:
+            # Clore/Vast don't know where the box sits; the inventory does (for its power rate)
+            location = (inv or {}).get("_location", {}).get("name") or device["source"]
         is_home = (location or "").lower() == "home"
 
         watts, watts_quality = None, None
@@ -537,7 +543,23 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
         rate_info = rates.get(algorithm or "")
         kx_rate = kryptex_rates.get(kryptex_coin or "")
         if device and device["source"] == "clore":
-            expected_basis = "rental price shown in detail (renter price, before Clore fees)"
+            prices_by_ccy = (device.get("extra") or {}).get("rented_price_by_currency") or {}
+            btc_price = next((v for k, v in prices_by_ccy.items() if "bitcoin" in k.lower() or k.upper() == "BTC"), None)
+            if btc_price is not None and btc_usd:
+                expected_usd = float(btc_price) * btc_usd
+                expected_basis = "Clore renter price per day in BTC x BTC price (before Clore's host fee)"
+            elif prices_by_ccy:
+                expected_basis = "rented, priced in " + ", ".join(prices_by_ccy) + " (no USD price for that currency)"
+            else:
+                expected_basis = "not rented right now"
+        elif device and device["source"] == "vast":
+            vast_id = str((device.get("extra") or {}).get("id"))
+            earned_7d = (vast_earnings.get("per_machine_7d_usd") or {}).get(vast_id)
+            if earned_7d is not None:
+                expected_usd = earned_7d / 7
+                expected_basis = "Vast earnings, average of the last 7 days (actual, after Vast's fee)"
+            else:
+                expected_basis = "no Vast earnings breakdown for this machine yet"
         elif hashrate and kx_rate:
             # The coin actually mined, at Kryptex's network hashrate, emission, fee and price
             expected_usd = hashrate * kx_rate["usd_per_hs_day"]

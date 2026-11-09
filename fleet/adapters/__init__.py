@@ -5,6 +5,7 @@ from fleet.adapters.kryptex import KryptexAdapter
 from fleet.adapters.lan_asic import LanAsicAdapter
 from fleet.adapters.pdu import PduAdapter
 from fleet.adapters.powerpool import PowerPoolAdapter
+from fleet.adapters.vast import VastAdapter
 
 
 def all_adapters():
@@ -12,6 +13,7 @@ def all_adapters():
         PowerPoolAdapter(),
         ForemanAdapter(),
         CloreAdapter(),
+        VastAdapter(),
         KryptexAdapter(),
         LanAsicAdapter(),
         ElectricityAdapter(),

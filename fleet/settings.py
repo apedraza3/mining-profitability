@@ -34,6 +34,9 @@ FOREMAN_CLIENT_ID = os.getenv("FOREMAN_CLIENT_ID", "")
 # Clore.ai host account. The key can also reprice servers and spend balance.
 CLORE_API_KEY = os.getenv("CLORE_API_KEY", "")
 
+# Vast.ai host account. Create it restricted to machine_read + billing_read.
+VAST_API_KEY = os.getenv("VAST_API_KEY", "")
+
 # Kryptex pool, wallet-keyed and public: "coin:address,coin:address"
 KRYPTEX_WALLETS = [
     tuple(item.strip().split(":", 1))

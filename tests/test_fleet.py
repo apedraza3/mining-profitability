@@ -18,7 +18,7 @@ os.environ["FLEET_DB"] = str(Path(_TMP) / "telemetry.db")
 os.environ["FLEET_OVERHEADS"] = str(Path(_TMP) / "none.json")
 
 from fleet import history, snmp, store, view  # noqa: E402
-from fleet.adapters import kryptex, lan_asic, pdu  # noqa: E402
+from fleet.adapters import kryptex, lan_asic, pdu, vast  # noqa: E402
 from fleet.units import pay_rate_per_hs, to_hs  # noqa: E402
 
 
@@ -58,6 +58,32 @@ class Kryptex(unittest.TestCase):
         v = kryptex.usd_per_hs_day({"net_hashrate": 1e12, "fee": 0.01}, {"daily_emission": 1000}, 2.0)
         self.assertAlmostEqual(v, 1000 / 1e12 * 0.99 * 2.0)
         self.assertIsNone(kryptex.usd_per_hs_day({}, {"daily_emission": 1}, 1.0))
+
+
+class Vast(unittest.TestCase):
+    def test_occupancy_and_totals(self):
+        self.assertEqual(vast.rented_gpus("D D x x"), 2)
+        self.assertEqual(vast.rented_gpus("x x"), 0)
+        self.assertIsNone(vast.rented_gpus(None))
+        self.assertEqual(vast.earning_total({"gpu_earn": 1.5, "sto_earn": 0.25, "machine_id": 7}), 1.75)
+        self.assertEqual(vast.earning_total({"Total": "3.0", "gpu_earn": 1}), 3.0)
+
+    def test_poll_parses_machines_and_earnings(self):
+        responses = {
+            "/machines": {"machines": [{"id": 7, "hostname": "gpu-box", "num_gpus": 4,
+                                        "gpu_occupancy": "D x x x", "listed_gpu_cost": 0.3}]},
+            "/users/me/machine-earnings": {
+                "per_machine": [{"machine_id": 7, "gpu_earn": 14.0}],
+                "per_day": [{"day": 1, "gpu_earn": 2.0}, {"day": 2, "gpu_earn": 3.0}]},
+        }
+        with mock.patch.object(vast.settings, "VAST_API_KEY", "k"), \
+                mock.patch.object(vast.VastAdapter, "_get", side_effect=lambda path, params: responses[path]):
+            out = vast.VastAdapter().poll()
+        m = out["machines"][0]
+        self.assertEqual((m["machine_key"], m["name"], m["status"]), ("vast:7", "gpu-box", "1/4 GPUs rented"))
+        acct = out["accounts"]["vast:earnings"]
+        self.assertEqual(acct["last_7d_usd"], 5.0)
+        self.assertEqual(acct["per_machine_7d_usd"], {"7": 14.0})
 
 
 class Snmp(unittest.TestCase):
@@ -202,6 +228,41 @@ class PduCircuits(unittest.TestCase):
         info = view.apply_pdu_circuits(rows, view.pdu_circuit_readings(accounts), {"apc:total": ["A"]}, 0.1, 1)
         self.assertEqual(info[0]["state"], "stale")
         self.assertEqual(rows[0]["watts"], 1000)
+
+
+class RentalRows(unittest.TestCase):
+    """Clore/Vast rows through build_fleet, with the inventory supplying location and watts."""
+
+    def test_build_fleet_rental_income_and_location(self):
+        state = {
+            "sources": [],
+            "machines": [
+                {"machine_key": "vast:7", "source": "vast", "name": "gpu-box", "kind": "rental_server",
+                 "location": None, "running": None, "status": "1/4 GPUs rented",
+                 "extra": {"id": 7}, "fetched_at": iso(10)},
+                {"machine_key": "clore:rig", "source": "clore", "name": "rig", "kind": "rental_server",
+                 "location": "clore", "running": True, "status": "fully rented",
+                 "extra": {"rented_price_by_currency": {"bitcoin": 0.0001}}, "fetched_at": iso(10)},
+            ],
+            "accounts": [
+                {"account_key": "powerpool:payrates", "source": "powerpool", "fetched_at": iso(10),
+                 "data": {"rates": {}, "prices": {"BTC": 100000}}},
+                {"account_key": "electricity:rates", "source": "electricity", "fetched_at": iso(10),
+                 "data": {"marginal_energy_rate": 0.1, "demand_rate_with_tax": 16.41}},
+                {"account_key": "vast:earnings", "source": "vast", "fetched_at": iso(10),
+                 "data": {"per_machine_7d_usd": {"7": 14.0}}},
+            ],
+        }
+        inventory = [{"id": 1, "name": "gpu-box", "location_id": "h", "wattage": 1000, "status": "active"}]
+        with mock.patch.object(view.store, "read_all", return_value=state):
+            f = view.build_fleet(inventory, [{"id": "h", "name": "home"}])
+        rows = {r["name"]: r for r in f["machines"]}
+        box = rows["gpu-box"]
+        self.assertEqual(box["location"], "home")
+        self.assertAlmostEqual(box["expected_usd_day"], 2.0)
+        self.assertAlmostEqual(box["power_usd_day"], 1.0 * 24 * 0.1)
+        self.assertAlmostEqual(rows["rig"]["expected_usd_day"], 10.0)
+        self.assertEqual(rows["rig"]["location"], "clore")
 
 
 class Solar(unittest.TestCase):

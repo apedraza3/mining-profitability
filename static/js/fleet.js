@@ -209,6 +209,14 @@
                 lines.push('Balance: ' + (b.total === undefined ? '—' : b.total) + ' ' + (a.data.coin || '').toUpperCase());
                 lines.push('Actual last 7 days: ' + (a.actual_last_7d_coin || 0) + ' ' + (a.data.coin || '').toUpperCase() +
                     (a.actual_last_7d_usd !== null && a.actual_last_7d_usd !== undefined ? ' (' + money(a.actual_last_7d_usd) + ')' : ''));
+            } else if (a.source === 'vast') {
+                lines.push('Earned last 7 days: ' + money(a.data.last_7d_usd));
+                Object.keys(a.data.per_machine_7d_usd || {}).forEach(function (id) {
+                    lines.push('Machine ' + id + ': ' + money(a.data.per_machine_7d_usd[id]) + ' (7 days)');
+                });
+                if (a.data.last_7d_usd === null || a.data.last_7d_usd === undefined) {
+                    lines.push('Raw: ' + String(a.data.raw || '').slice(0, 300));
+                }
             } else if (a.source === 'clore') {
                 (a.data.wallets || []).forEach(function (w) { lines.push(w.name + ': ' + w.balance); });
             } else {
