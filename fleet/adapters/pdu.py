@@ -15,6 +15,8 @@ Vendors, by sysObjectID:
 - APC Switched Rack PDU 2G, e.g. AP8941 (enterprise 318, PowerNet-MIB rPDU2):
   rPDU2DeviceStatusPower .1.3.6.1.4.1.318.1.1.26.4.3.1.5 (1/100 kW),
   PeakPower .6 (1/100 kW), Energy .9 (1/10 kWh, resettable). -1 = unsupported.
+  Per-bank current at rPDU2BankStatus .26.8.3.1.5 (1/10 A); there is no per-bank watts
+  column, so banks are shown as VA (A x phase volts from .26.6.3.1.6).
 """
 
 import logging
@@ -33,6 +35,8 @@ CPI = "1.3.6.1.4.1.30932"
 CPI_LEGACY_BRANCHES = ("XY1", "YZ1", "ZX1", "XY2", "YZ2", "ZX2")
 APC = "1.3.6.1.4.1.318"
 APC_RPDU2_STATUS = "1.3.6.1.4.1.318.1.1.26.4.3.1"
+APC_RPDU2_BANK = "1.3.6.1.4.1.318.1.1.26.8.3.1"          # .3 bank number, .5 current 1/10 A
+APC_RPDU2_PHASE_VOLTS = "1.3.6.1.4.1.318.1.1.26.6.3.1.6"  # volts
 
 
 def parse_devices(raw: str, default_community: str) -> list[tuple[str, str, str]]:
@@ -96,11 +100,26 @@ def read_apc(host: str, community: str) -> dict:
         return [v for o, v in values.items() if o.startswith(f"{APC_RPDU2_STATUS}.{c}.")
                 and isinstance(v, int) and v >= 0]
     power, peak, energy = col(5), col(6), col(9)
+
+    # Per-bank current (rPDU2BankStatus, 1/10 A) has no watts column, so bank load is
+    # reported as VA = A x phase voltage (rPDU2PhaseStatusVoltage, whole volts).
+    banks = snmp.walk(host, community, APC_RPDU2_BANK)
+    phase_v = snmp.walk(host, community, APC_RPDU2_PHASE_VOLTS)
+    volts = next((v for v in phase_v.values() if isinstance(v, int) and v > 0), None)
+    branches = []
+    for oid, value in sorted(banks.items()):
+        if not oid.startswith(f"{APC_RPDU2_BANK}.5.") or not isinstance(value, int) or value < 0:
+            continue
+        idx = oid.rsplit(".", 1)[-1]
+        number = banks.get(f"{APC_RPDU2_BANK}.3.{idx}", idx)
+        amps = value / 10
+        branches.append({"branch": f"Bank {number}", "amps": amps, "volts": volts,
+                         "va": round(amps * volts) if volts else None})
     return {
         "total_w": sum(power) * 10 if power else None,          # 1/100 kW -> W
         "peak_w": max(peak) * 10 if peak else None,
         "energy_kwh": sum(energy) / 10 if energy else None,     # 1/10 kWh, resettable
-        "power_kind": "active (W)", "branches": [], "mib": "PowerNet rPDU2",
+        "power_kind": "active (W)", "branches": branches, "mib": "PowerNet rPDU2",
     }
 
 
