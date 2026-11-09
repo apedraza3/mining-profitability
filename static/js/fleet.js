@@ -255,11 +255,14 @@
         if (!canvas || typeof Chart === 'undefined') return;
         var existing = Chart.getChart(canvas);
         if (existing) existing.destroy();
+        // Dots while there are only a few snapshots (a single point draws no line)
+        var dot = labels.length < 24 ? 3 : 0;
         new Chart(canvas, {
             type: 'line',
             data: { labels: labels, datasets: datasets.map(function (ds, i) {
-                return Object.assign({ borderColor: PALETTE[i % PALETTE.length], backgroundColor: 'transparent',
-                    pointRadius: 0, borderWidth: 2, tension: 0.2, spanGaps: true }, ds);
+                var color = PALETTE[i % PALETTE.length];
+                return Object.assign({ borderColor: color, backgroundColor: color,
+                    pointRadius: dot, borderWidth: 2, tension: 0.2, spanGaps: true }, ds);
             }) },
             options: {
                 responsive: true, maintainAspectRatio: false, animation: false,
