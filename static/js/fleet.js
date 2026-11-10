@@ -132,16 +132,19 @@
         });
         var cl = sm.climate;
         if (cl && cl.temp_f !== null && cl.temp_f !== undefined) {
-            var rh = cl.humidity_pct;
-            var airCls = (cl.temp_f >= 95 || (rh !== null && (rh < 20 || rh > 65))) ? 'warn' : '';
+            // The probe hangs in the hot aisle, so its RH reads low just because the air is hot.
+            // Dew point is the same everywhere in the room: < ~32 F = dry (static), > ~55 F = damp.
+            var dp = cl.dew_point_f;
+            var dryness = dp === null || dp === undefined ? '' :
+                dp < 32 ? ' (dry air: static risk)' : dp > 55 ? ' (damp air: condensation risk)' : '';
+            var airCls = (cl.temp_f >= 105 || dryness) ? 'warn' : '';
             var fanText = (cl.fans || []).map(function (f) {
                 return f.label + ' ' + (f.online ? (f.speed === null ? '?' : f.speed) + '/10' : 'offline') +
                     (f.mode && f.mode !== 'On' ? ' (' + f.mode + ')' : '');
             }).join(' · ');
-            card('Basement air', cl.temp_f.toFixed(1) + ' °F',
-                (rh === null ? '' : rh.toFixed(0) + '% RH') +
-                (cl.dew_point_f !== null && cl.dew_point_f !== undefined ? ', dew point ' + cl.dew_point_f.toFixed(0) + ' °F' : '') +
-                (rh !== null && rh < 20 ? ' (very dry: static risk)' : rh !== null && rh > 65 ? ' (humid: condensation risk)' : '') +
+            card(cl.label || 'Hot aisle', cl.temp_f.toFixed(1) + ' °F',
+                (cl.humidity_pct === null ? '' : cl.humidity_pct.toFixed(0) + '% RH') +
+                (dp !== null && dp !== undefined ? ', dew point ' + dp.toFixed(0) + ' °F' : '') + dryness +
                 (fanText ? ' · fans ' + fanText : '') + ' · ' + ago(cl.fetched_at), airCls);
         }
         var circuits = sm.pdu_circuits || [];
@@ -333,7 +336,8 @@
         });
         lineChart('fleetPowerChart', labels, power, 'kW');
         lineChart('fleetClimateChart', labels, [
-            { label: 'Basement °F', data: pts.map(function (p) { return p.basement_temp_f; }) },
+            { label: 'Hot aisle °F', data: pts.map(function (p) { return p.basement_temp_f; }) },
+            { label: 'Dew point °F', data: pts.map(function (p) { return p.dew_point_f; }) },
             { label: 'Humidity %', data: pts.map(function (p) { return p.basement_humidity_pct; }) }
         ], '');
         lineChart('fleetMoneyChart', labels, [

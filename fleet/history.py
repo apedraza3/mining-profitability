@@ -47,6 +47,7 @@ def compact(fleet: dict) -> dict:
         "btc_usd": _r(sm.get("btc_usd"), 0),
         "basement_temp_f": _r((sm.get("climate") or {}).get("temp_f"), 1),
         "basement_humidity_pct": _r((sm.get("climate") or {}).get("humidity_pct"), 1),
+        "dew_point_f": _r((sm.get("climate") or {}).get("dew_point_f"), 1),
         "fan_speed": {f["label"]: f.get("speed") for f in (sm.get("climate") or {}).get("fans") or []
                       if isinstance(f.get("speed"), (int, float))},
     }

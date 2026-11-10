@@ -38,6 +38,7 @@ CLORE_API_KEY = os.getenv("CLORE_API_KEY", "")
 HA_URL = os.getenv("HA_URL", "http://127.0.0.1:8123")
 HA_TOKEN = os.getenv("HA_TOKEN", "")
 HA_PREFIX = os.getenv("HA_PREFIX", "new_device")
+HA_PROBE_LABEL = os.getenv("HA_PROBE_LABEL", "Hot aisle")   # where the controller's probe hangs
 HA_FAN_PORTS = os.getenv("HA_FAN_PORTS", "1:S8 exhaust (port 1),2:S8 exhaust (port 2)")
 
 # Vast.ai host account. Create it restricted to machine_read + billing_read.

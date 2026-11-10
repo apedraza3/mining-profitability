@@ -85,6 +85,7 @@ class HomeAssistantAdapter(Adapter):
                 "online": online.get("state") == "on",
             })
         climate = {
+            "label": settings.HA_PROBE_LABEL,
             "temp_c": round(temp_c, 1) if temp_c is not None else None,
             "temp_f": round(temp_c * 9 / 5 + 32, 1) if temp_c is not None else None,
             "humidity_pct": round(rh, 1) if rh is not None else None,
