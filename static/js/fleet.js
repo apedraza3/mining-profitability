@@ -147,6 +147,20 @@
                 (dp !== null && dp !== undefined ? ', dew point ' + dp.toFixed(0) + ' °F' : '') + dryness +
                 (fanText ? ' · fans ' + fanText : '') + ' · ' + ago(cl.fetched_at), airCls);
         }
+        var fc = sm.fan_control;
+        if (fc && fc.mode && fc.mode !== 'off') {
+            var drv = fc.driver ? fc.driver.name + ' ' + fc.driver.value + (fc.driver.unit || '') : 'no data';
+            var label = fc.mode === 'on' ? 'Fan control' : 'Fan control (dry run)';
+            var value = (fc.current === null || fc.current === undefined ? '?' : fc.current) + ' → ' + fc.target + '/10';
+            var inputs = (fc.inputs || []).map(function (i) {
+                return i.name + ' ' + i.value + (i.unit || '') + (i.stale ? ' (stale)' : '');
+            }).join(' · ');
+            card(label, value, 'driven by ' + drv + ': ' + fc.reason +
+                (fc.mode !== 'on' ? ' · not changing the fans until FAN_CONTROL=on' : '') +
+                (fc.skipped_ports && fc.skipped_ports.length ? ' · ports ' + fc.skipped_ports.join(', ') + ' left alone (not in On mode)' : '') +
+                (fc.error ? ' · last write failed: ' + fc.error : '') + ' · inputs: ' + inputs,
+                fc.error ? 'warn' : '');
+        }
         var circuits = sm.pdu_circuits || [];
         if (circuits.length) {
             var applied = circuits.filter(function (c) { return c.state === 'applied'; }).length;

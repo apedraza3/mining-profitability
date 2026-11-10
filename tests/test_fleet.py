@@ -17,7 +17,7 @@ _TMP = tempfile.mkdtemp()
 os.environ["FLEET_DB"] = str(Path(_TMP) / "telemetry.db")
 os.environ["FLEET_OVERHEADS"] = str(Path(_TMP) / "none.json")
 
-from fleet import history, snmp, store, view  # noqa: E402
+from fleet import fan_control, history, snmp, store, view  # noqa: E402
 from fleet.adapters import foreman, homeassistant, kryptex, lan_asic, pdu, vast  # noqa: E402
 from fleet.units import pay_rate_per_hs, to_hs  # noqa: E402
 
@@ -304,6 +304,51 @@ class RentalRows(unittest.TestCase):
         self.assertAlmostEqual(rows["rig"]["expected_usd_day"], 8.0)  # 10 x (1 - 5% - 15%)
         self.assertEqual(rows["rig"]["location"], "clore")
         self.assertAlmostEqual(rows["usdrig"]["expected_usd_day"], 17.6)  # matches the Clore statement
+
+
+class FanControl(unittest.TestCase):
+    CFG = {"min": 4, "max": 10, "air_f": (80.0, 95.0), "asic_c": (70.0, 85.0), "gpu_c": (70.0, 83.0),
+           "exclude": ["Z15"], "stale_s": 600, "down_hold_s": 600}
+
+    def snapshot(self, air_f=85.0, z11=75.0, z15=95.0, gpus=None, age=10):
+        machines = [
+            {"name": "Z11-1", "source": "lan", "location": "home", "running": True, "temp_max": z11,
+             "extra": {}, "fetched_at": iso(age)},
+            {"name": "Z15", "source": "lan", "location": "home", "running": True, "temp_max": z15,
+             "extra": {}, "fetched_at": iso(age)},
+        ]
+        if gpus:
+            machines.append({"name": "atp-gpu01", "source": "kryptex", "location": "home", "running": True,
+                             "temp_max": None, "extra": {"gpu_temps_c": gpus}, "fetched_at": iso(age)})
+        return {"machines": machines, "accounts": [
+            {"account_key": "climate:basement", "fetched_at": iso(age), "data": {"label": "Hot aisle", "temp_f": air_f}}]}
+
+    def test_inputs_exclude_immersion_and_take_hottest_gpu(self):
+        inputs = fan_control.collect_inputs(self.snapshot(gpus=[74, 79, 76]), self.CFG)
+        names = {i["name"]: i for i in inputs}
+        self.assertNotIn("Z15", names)
+        self.assertEqual(names["atp-gpu01"]["value"], 79)
+        self.assertAlmostEqual(names["Hot aisle"]["demand"], 1 / 3)
+
+    def test_hottest_input_drives_and_raises_immediately(self):
+        st = {"lower_since": None}
+        inputs = fan_control.collect_inputs(self.snapshot(air_f=85.0, gpus=[82]), self.CFG)
+        target, driver, _ = fan_control.decide(inputs, 6, self.CFG, 0, st)
+        self.assertEqual(driver["name"], "atp-gpu01")   # 82 C -> demand 12/13
+        self.assertEqual(target, 10)
+
+    def test_lowers_one_step_only_after_hold(self):
+        st = {"lower_since": None}
+        inputs = fan_control.collect_inputs(self.snapshot(air_f=80.0, z11=70.0), self.CFG)
+        self.assertEqual(fan_control.decide(inputs, 8, self.CFG, 0, st)[0], 8)      # starts holding
+        self.assertEqual(fan_control.decide(inputs, 8, self.CFG, 300, st)[0], 8)    # still holding
+        self.assertEqual(fan_control.decide(inputs, 8, self.CFG, 601, st)[0], 7)    # one step down
+
+    def test_fail_safe_when_everything_is_stale(self):
+        inputs = fan_control.collect_inputs(self.snapshot(age=3600), self.CFG)
+        target, driver, reason = fan_control.decide(inputs, 5, self.CFG, 0, {"lower_since": None})
+        self.assertEqual((target, driver), (10, None))
+        self.assertIn("fail safe", reason)
 
 
 class Solar(unittest.TestCase):

@@ -41,6 +41,17 @@ HA_PREFIX = os.getenv("HA_PREFIX", "new_device")
 HA_PROBE_LABEL = os.getenv("HA_PROBE_LABEL", "Hot aisle")   # where the controller's probe hangs
 HA_FAN_PORTS = os.getenv("HA_FAN_PORTS", "1:S8 exhaust (port 1),2:S8 exhaust (port 2)")
 
+# Exhaust fan control from room + machine temps (see fleet/fan_control.py)
+FAN_CONTROL = os.getenv("FAN_CONTROL", "off")        # off | dry_run | on
+FAN_MIN = int(os.getenv("FAN_MIN", "4"))             # never slower than this (0-10)
+FAN_MAX = int(os.getenv("FAN_MAX", "10"))
+FAN_AIR_F = os.getenv("FAN_AIR_F", "80,95")          # hot-aisle F: min speed at 80, max at 95
+FAN_ASIC_C = os.getenv("FAN_ASIC_C", "70,85")        # ASIC chip C
+FAN_GPU_C = os.getenv("FAN_GPU_C", "70,83")          # GPU core C
+FAN_EXCLUDE = os.getenv("FAN_EXCLUDE", "Z15")        # immersion-cooled: room fans don't cool it
+FAN_STALE_S = int(os.getenv("FAN_STALE_S", "600"))
+FAN_DOWN_HOLD_S = int(os.getenv("FAN_DOWN_HOLD_S", "600"))
+
 # Vast.ai host account. Create it restricted to machine_read + billing_read.
 VAST_API_KEY = os.getenv("VAST_API_KEY", "")
 
