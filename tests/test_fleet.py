@@ -66,6 +66,11 @@ class Foreman(unittest.TestCase):
         self.assertEqual(foreman.miner_watts({"metricInfo": {"power": 3399}}), 3399.0)
         self.assertIsNone(foreman.miner_watts({"name": "x", "power": 0}))
 
+    def test_worker_name_merges_with_pool(self):
+        self.assertEqual(foreman.pool_worker_name({"pools": [{"url": "u", "worker": "ATPTECHNOLOGY.L9Hosted1"}]}),
+                         "L9Hosted1")
+        self.assertIsNone(foreman.pool_worker_name({"pools": []}))
+
 
 class Vast(unittest.TestCase):
     def test_occupancy_and_totals(self):

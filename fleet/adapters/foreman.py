@@ -16,6 +16,18 @@ wattage. Endpoints are rate limited to ~1 req/s.
 POWER_KEYS = ("powerDraw", "power_draw", "power-draw", "wattage", "power", "powerUsage")
 
 
+def pool_worker_name(miner: dict) -> str | None:
+    """The worker part of the miner's pool login ("ATPTECHNOLOGY.L9Hosted1" -> "L9Hosted1"),
+    so the Foreman row merges with the PowerPool worker of the same machine."""
+    for pool in miner.get("pools") or []:
+        if not isinstance(pool, dict):
+            continue
+        login = pool.get("worker") or pool.get("username") or pool.get("user")
+        if isinstance(login, str) and login.strip():
+            return login.strip().split(".", 1)[-1]
+    return None
+
+
 def miner_watts(miner: dict) -> float | None:
     """Power draw in W from a Foreman miner object, if it carries one (top level or metricInfo)."""
     for source in (miner, miner.get("metricInfo") or {}, miner.get("metrics") or {}):
@@ -86,7 +98,7 @@ class ForemanAdapter(Adapter):
             machines.append({
                 "machine_key": f"foreman:{m.get('id')}",
                 "source": self.name,
-                "name": m.get("name") or str(m.get("id")),
+                "name": pool_worker_name(m) or m.get("name") or str(m.get("id")),
                 "kind": "asic",
                 "location": "metered-mining",
                 "running": running,
@@ -97,6 +109,7 @@ class ForemanAdapter(Adapter):
                 "observed_at": m.get("lastUpdated"),
                 "extra": {
                     "model": (m.get("type") or {}).get("name"),
+                    "foreman_name": m.get("name"),
                     "active": m.get("active"),
                     "power_mode": m.get("powerMode"),
                     "firmware": (m.get("firmware") or {}).get("author"),
