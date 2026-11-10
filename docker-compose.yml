@@ -24,3 +24,5 @@ services:
       - fleet.env
     volumes:
       - ./data:/app/data
+      # Read-only SSH key + pinned host keys for GPU temps (poller only, never in the image)
+      - ./fleet-ssh:/app/fleet-ssh:ro

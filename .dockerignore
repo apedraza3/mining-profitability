@@ -19,3 +19,4 @@ fleet.env.*
 !fleet.env.example
 *.bak*
 data/fleet_overheads.json
+fleet-ssh/

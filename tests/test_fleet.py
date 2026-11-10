@@ -18,7 +18,7 @@ os.environ["FLEET_DB"] = str(Path(_TMP) / "telemetry.db")
 os.environ["FLEET_OVERHEADS"] = str(Path(_TMP) / "none.json")
 
 from fleet import fan_control, history, snmp, store, view  # noqa: E402
-from fleet.adapters import foreman, homeassistant, kryptex, lan_asic, pdu, vast  # noqa: E402
+from fleet.adapters import foreman, gpu_temps, homeassistant, kryptex, lan_asic, pdu, vast  # noqa: E402
 from fleet.units import pay_rate_per_hs, to_hs  # noqa: E402
 
 
@@ -95,6 +95,28 @@ class HomeAssistantClimate(unittest.TestCase):
         self.assertEqual((c["temp_f"], c["humidity_pct"]), (85.0, 13.7))
         self.assertEqual(c["fans"][0], {"port": 1, "label": "S8 A", "speed": 6.0, "mode": "On", "online": True})
         self.assertEqual(c["fans"][1]["online"], False)  # port 2 missing -> offline, not an error
+
+
+class GpuTemps(unittest.TestCase):
+    def test_parse_hosts(self):
+        self.assertEqual(gpu_temps.parse_hosts("atp-gpu01=alex@192.168.1.226:nvidia, rig58FCFE=user@192.168.1.119:hiveos"),
+                         [("atp-gpu01", "alex@192.168.1.226", "nvidia"), ("rig58FCFE", "user@192.168.1.119", "hiveos")])
+
+    def test_parse_nvidia(self):
+        p = gpu_temps.parse_nvidia("0, 74, 69, 176.80\n1, 78, 70, 180.56\n")
+        self.assertEqual((p["temps_c"], p["mem_temps_c"], p["power_w"]), ([74.0, 78.0], [69.0, 70.0], [176.8, 180.56]))
+
+    def test_parse_hiveos_skips_intel_igpu(self):
+        p = gpu_temps.parse_hiveos('{"temp":[0,73,77],"power":[0,118,114],"brand":["cpu","nvidia","nvidia"]}')
+        self.assertEqual(p["temps_c"], [73.0, 77.0])
+
+    def test_fan_control_uses_gputemps_and_flags_failed_reads(self):
+        snap = {"machines": [], "accounts": [
+            {"account_key": "gputemps:atp-gpu01", "fetched_at": iso(10), "data": {"name": "atp-gpu01", "temps_c": [74, 78]}},
+            {"account_key": "gputemps:rig58FCFE", "fetched_at": iso(10), "data": {"name": "rig58FCFE", "error": "timeout"}}]}
+        inputs = {i["name"]: i for i in fan_control.collect_inputs(snap, FanControl.CFG)}
+        self.assertEqual(inputs["atp-gpu01"]["value"], 78)
+        self.assertTrue(inputs["rig58FCFE"]["stale"])
 
 
 class Vast(unittest.TestCase):

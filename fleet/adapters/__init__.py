@@ -1,6 +1,7 @@
 from fleet.adapters.clore import CloreAdapter
 from fleet.adapters.electricity import ElectricityAdapter
 from fleet.adapters.foreman import ForemanAdapter
+from fleet.adapters.gpu_temps import GpuTempsAdapter
 from fleet.adapters.homeassistant import HomeAssistantAdapter
 from fleet.adapters.kryptex import KryptexAdapter
 from fleet.adapters.lan_asic import LanAsicAdapter
@@ -20,4 +21,5 @@ def all_adapters():
         ElectricityAdapter(),
         PduAdapter(),
         HomeAssistantAdapter(),
+        GpuTempsAdapter(),
     ]

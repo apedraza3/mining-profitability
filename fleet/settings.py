@@ -41,6 +41,10 @@ HA_PREFIX = os.getenv("HA_PREFIX", "new_device")
 HA_PROBE_LABEL = os.getenv("HA_PROBE_LABEL", "Hot aisle")   # where the controller's probe hangs
 HA_FAN_PORTS = os.getenv("HA_FAN_PORTS", "1:S8 exhaust (port 1),2:S8 exhaust (port 2)")
 
+# GPU temps over SSH, read-only forced command (see fleet/adapters/gpu_temps.py):
+# name=user@host:format,...  format nvidia | hiveos
+GPU_TEMP_HOSTS = os.getenv("GPU_TEMP_HOSTS", "")
+
 # Exhaust fan control from room + machine temps (see fleet/fan_control.py)
 FAN_CONTROL = os.getenv("FAN_CONTROL", "off")        # off | dry_run | on
 FAN_MIN = int(os.getenv("FAN_MIN", "4"))             # never slower than this (0-10)

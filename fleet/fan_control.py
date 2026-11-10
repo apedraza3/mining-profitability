@@ -57,6 +57,21 @@ def collect_inputs(snapshot: dict, cfg: dict) -> list[dict]:
                     "unit": "°F", "demand": ramp(d.get("temp_f"), *cfg["air_f"]),
                     "stale": age is None or age > cfg["stale_s"]})
     excluded = {norm(n) for n in cfg["exclude"]}
+    for key, acct in accounts.items():
+        if not key.startswith("gputemps:"):
+            continue
+        d = acct["data"]
+        if norm(d.get("name") or "") in excluded:
+            continue
+        temps = [t for t in d.get("temps_c") or [] if isinstance(t, (int, float))]
+        age = _age_s(acct.get("fetched_at"))
+        if not temps:  # read failed: show it as stale rather than silently dropping the rig
+            out.append({"name": d.get("name"), "kind": "gpu", "value": None, "unit": "°C",
+                        "demand": None, "stale": True})
+            continue
+        out.append({"name": d.get("name"), "kind": "gpu", "value": max(temps), "unit": "°C",
+                    "demand": ramp(max(temps), *cfg["gpu_c"]),
+                    "stale": age is None or age > cfg["stale_s"] or bool(d.get("error"))})
     for m in snapshot.get("machines", []):
         if norm(m["name"]) in excluded or (m.get("location") not in (None, "home") and m["source"] != "lan"):
             continue
