@@ -276,9 +276,9 @@ class RentalRows(unittest.TestCase):
         self.assertEqual(box["location"], "home")
         self.assertAlmostEqual(box["expected_usd_day"], 2.0)
         self.assertAlmostEqual(box["power_usd_day"], 1.0 * 24 * 0.1)
-        self.assertAlmostEqual(rows["rig"]["expected_usd_day"], 10.0)
+        self.assertAlmostEqual(rows["rig"]["expected_usd_day"], 8.0)  # 10 x (1 - 5% - 15%)
         self.assertEqual(rows["rig"]["location"], "clore")
-        self.assertEqual(rows["usdrig"]["expected_usd_day"], 22.0)
+        self.assertAlmostEqual(rows["usdrig"]["expected_usd_day"], 17.6)  # matches the Clore statement
 
 
 class Solar(unittest.TestCase):

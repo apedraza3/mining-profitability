@@ -20,6 +20,9 @@ from fleet.units import to_hs
 DEVICE_PRIORITY = ("lan", "foreman", "clore", "vast")
 # GPU rental marketplaces: one row per listed server, keyed by source (not merged by name)
 RENTAL_SOURCES = ("clore", "vast")
+# Clore host fees (no PoH / MFP discounts): base on every order, extra on BTC/USD orders
+CLORE_BASE_FEE = 0.05
+CLORE_EXTRA_FEE = 0.15
 POOL_SOURCES = ("powerpool", "kryptex")
 KRYPTEX_COIN_ALGO = {"btc": "sha256", "ltc": "scrypt", "doge": "scrypt", "kas": "kheavyhash"}
 DAYS_PER_MONTH = 30.4
@@ -548,13 +551,19 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
             prices_by_ccy = (device.get("extra") or {}).get("rented_price_by_currency") or {}
             usd_price = next((v for k, v in prices_by_ccy.items() if k.upper().startswith("USD")), None)
             btc_price = next((v for k, v in prices_by_ccy.items() if "bitcoin" in k.lower() or k.upper() == "BTC"), None)
+            # Host keeps 1 - base fee - extra fee. Extra applies to BTC/USD-stablecoin orders,
+            # not CLORE ones. Owner's 2026-11-09/10 statement: $22 gross -> $1.10 base +
+            # $3.30 extra -> $17.60 revenue, i.e. 5% + 15%.
+            keep = 1 - CLORE_BASE_FEE - CLORE_EXTRA_FEE
             if usd_price is not None:
                 # "USD-Blockchain" = stablecoin-settled order, priced in dollars per day
-                expected_usd = float(usd_price)
-                expected_basis = "Clore renter price, USD per day (before Clore's host fees)"
+                expected_usd = float(usd_price) * keep
+                expected_basis = (f"Clore renter price ${float(usd_price):.2f}/day minus host fees "
+                                  f"({CLORE_BASE_FEE:.0%} base + {CLORE_EXTRA_FEE:.0%} extra on USD orders)")
             elif btc_price is not None and btc_usd:
-                expected_usd = float(btc_price) * btc_usd
-                expected_basis = "Clore renter price per day in BTC x BTC price (before Clore's host fees)"
+                expected_usd = float(btc_price) * btc_usd * keep
+                expected_basis = (f"Clore renter price in BTC x BTC price minus host fees "
+                                  f"({CLORE_BASE_FEE:.0%} base + {CLORE_EXTRA_FEE:.0%} extra on BTC orders)")
             elif prices_by_ccy:
                 expected_basis = "rented, priced in " + ", ".join(prices_by_ccy) + " (no USD price for that currency)"
             else:
