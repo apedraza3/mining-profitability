@@ -544,10 +544,15 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
         kx_rate = kryptex_rates.get(kryptex_coin or "")
         if device and device["source"] == "clore":
             prices_by_ccy = (device.get("extra") or {}).get("rented_price_by_currency") or {}
+            usd_price = next((v for k, v in prices_by_ccy.items() if k.upper().startswith("USD")), None)
             btc_price = next((v for k, v in prices_by_ccy.items() if "bitcoin" in k.lower() or k.upper() == "BTC"), None)
-            if btc_price is not None and btc_usd:
+            if usd_price is not None:
+                # "USD-Blockchain" = stablecoin-settled order, priced in dollars per day
+                expected_usd = float(usd_price)
+                expected_basis = "Clore renter price, USD per day (before Clore's host fees)"
+            elif btc_price is not None and btc_usd:
                 expected_usd = float(btc_price) * btc_usd
-                expected_basis = "Clore renter price per day in BTC x BTC price (before Clore's host fee)"
+                expected_basis = "Clore renter price per day in BTC x BTC price (before Clore's host fees)"
             elif prices_by_ccy:
                 expected_basis = "rented, priced in " + ", ".join(prices_by_ccy) + " (no USD price for that currency)"
             else:

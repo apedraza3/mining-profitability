@@ -243,6 +243,9 @@ class RentalRows(unittest.TestCase):
                 {"machine_key": "clore:rig", "source": "clore", "name": "rig", "kind": "rental_server",
                  "location": "clore", "running": True, "status": "fully rented",
                  "extra": {"rented_price_by_currency": {"bitcoin": 0.0001}}, "fetched_at": iso(10)},
+                {"machine_key": "clore:usdrig", "source": "clore", "name": "usdrig", "kind": "rental_server",
+                 "location": "clore", "running": True, "status": "fully rented",
+                 "extra": {"rented_price_by_currency": {"USD-Blockchain": 22}}, "fetched_at": iso(10)},
             ],
             "accounts": [
                 {"account_key": "powerpool:payrates", "source": "powerpool", "fetched_at": iso(10),
@@ -263,6 +266,7 @@ class RentalRows(unittest.TestCase):
         self.assertAlmostEqual(box["power_usd_day"], 1.0 * 24 * 0.1)
         self.assertAlmostEqual(rows["rig"]["expected_usd_day"], 10.0)
         self.assertEqual(rows["rig"]["location"], "clore")
+        self.assertEqual(rows["usdrig"]["expected_usd_day"], 22.0)
 
 
 class Solar(unittest.TestCase):
