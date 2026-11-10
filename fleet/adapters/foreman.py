@@ -6,9 +6,30 @@ Verified against the official Foreman API 2.0.0 spec (swaggerhub foremanmining):
   miner: id, name, type.name, ip, mac, serial, lastUpdated, seen, active,
          status (pending|disabled|okay|warn|fail), powerMode, firmware.author, pools
 - GET /clients/{clientId}/miners/summary -> [{id, hashrate (H/s), powerMode, workers, lastUpdated}]
-The spec defines live power/temps (metricInfo) but exposes no path that returns them,
-so watts are left for the view to estimate. Endpoints are rate limited to ~1 req/s.
+The spec defines live power/temps (metricInfo) but documents no path that returns them.
+The dashboard does show a per-miner "Wattage" column (column key "power-draw", e.g. the
+A2 Pro at 4424 W on 2026-11-10), so the miner object is checked for any power-draw
+field and its value used when present; otherwise the view falls back to the inventory
+wattage. Endpoints are rate limited to ~1 req/s.
 """
+
+POWER_KEYS = ("powerDraw", "power_draw", "power-draw", "wattage", "power", "powerUsage")
+
+
+def miner_watts(miner: dict) -> float | None:
+    """Power draw in W from a Foreman miner object, if it carries one (top level or metricInfo)."""
+    for source in (miner, miner.get("metricInfo") or {}, miner.get("metrics") or {}):
+        if not isinstance(source, dict):
+            continue
+        for key in POWER_KEYS:
+            value = source.get(key)
+            try:
+                watts = float(value)
+            except (TypeError, ValueError):
+                continue
+            if watts > 0:
+                return watts
+    return None
 
 import time
 
@@ -51,6 +72,7 @@ class ForemanAdapter(Adapter):
 
         machines = []
         for m in miners:
+            watts = miner_watts(m)
             hs = hashrate.get(m.get("id"))
             status = m.get("status")
             if hs is not None:
@@ -70,6 +92,8 @@ class ForemanAdapter(Adapter):
                 "running": running,
                 "status": status,
                 "hashrate_hs": float(hs) if hs is not None else None,
+                "watts": watts,
+                "watts_quality": "reported (Foreman power draw)" if watts is not None else None,
                 "observed_at": m.get("lastUpdated"),
                 "extra": {
                     "model": (m.get("type") or {}).get("name"),

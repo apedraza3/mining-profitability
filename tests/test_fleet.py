@@ -18,7 +18,7 @@ os.environ["FLEET_DB"] = str(Path(_TMP) / "telemetry.db")
 os.environ["FLEET_OVERHEADS"] = str(Path(_TMP) / "none.json")
 
 from fleet import history, snmp, store, view  # noqa: E402
-from fleet.adapters import kryptex, lan_asic, pdu, vast  # noqa: E402
+from fleet.adapters import foreman, kryptex, lan_asic, pdu, vast  # noqa: E402
 from fleet.units import pay_rate_per_hs, to_hs  # noqa: E402
 
 
@@ -58,6 +58,13 @@ class Kryptex(unittest.TestCase):
         v = kryptex.usd_per_hs_day({"net_hashrate": 1e12, "fee": 0.01}, {"daily_emission": 1000}, 2.0)
         self.assertAlmostEqual(v, 1000 / 1e12 * 0.99 * 2.0)
         self.assertIsNone(kryptex.usd_per_hs_day({}, {"daily_emission": 1}, 1.0))
+
+
+class Foreman(unittest.TestCase):
+    def test_miner_watts(self):
+        self.assertEqual(foreman.miner_watts({"powerDraw": "4424"}), 4424.0)
+        self.assertEqual(foreman.miner_watts({"metricInfo": {"power": 3399}}), 3399.0)
+        self.assertIsNone(foreman.miner_watts({"name": "x", "power": 0}))
 
 
 class Vast(unittest.TestCase):
