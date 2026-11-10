@@ -34,6 +34,12 @@ FOREMAN_CLIENT_ID = os.getenv("FOREMAN_CLIENT_ID", "")
 # Clore.ai host account. The key can also reprice servers and spend balance.
 CLORE_API_KEY = os.getenv("CLORE_API_KEY", "")
 
+# Home Assistant (basement climate + AC Infinity fans), read-only long-lived token
+HA_URL = os.getenv("HA_URL", "http://127.0.0.1:8123")
+HA_TOKEN = os.getenv("HA_TOKEN", "")
+HA_PREFIX = os.getenv("HA_PREFIX", "new_device")
+HA_FAN_PORTS = os.getenv("HA_FAN_PORTS", "1:S8 exhaust (port 1),2:S8 exhaust (port 2)")
+
 # Vast.ai host account. Create it restricted to machine_read + billing_read.
 VAST_API_KEY = os.getenv("VAST_API_KEY", "")
 

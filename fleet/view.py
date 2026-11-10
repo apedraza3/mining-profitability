@@ -660,6 +660,8 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
                  | {"fetched_at": a["fetched_at"]}
                  for a in pdu_accounts],
         "pdu_circuits": pdu_circuits,
+        "climate": ((accounts.get("climate:basement") or {}).get("data") or None) and
+                   {**accounts["climate:basement"]["data"], "fetched_at": accounts["climate:basement"]["fetched_at"]},
         "btc_usd": btc_usd,
         "home_rate_kwh": home_rate,
         "demand_rate_kw_month": demand_rate,
@@ -668,7 +670,7 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
     account_view = []
     for a in data["accounts"]:
         if a["account_key"] in ("powerpool:payrates", "electricity:rates", "electricity:realtime",
-                                "kryptex:rates") or a["account_key"].startswith("pdu:"):
+                                "kryptex:rates", "climate:basement") or a["account_key"].startswith("pdu:"):
             continue
         d = a["data"]
         item = {"account": a["account_key"], "source": a["source"], "fetched_at": a["fetched_at"], "data": d}

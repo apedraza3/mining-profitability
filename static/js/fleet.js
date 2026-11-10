@@ -130,6 +130,20 @@
             card('PDU ' + p.name, p.total_w === null ? '—' : (p.total_w / 1000).toFixed(2) + unit,
                 (parts.join(' · ') || p.host) + ' · ' + ago(p.fetched_at));
         });
+        var cl = sm.climate;
+        if (cl && cl.temp_f !== null && cl.temp_f !== undefined) {
+            var rh = cl.humidity_pct;
+            var airCls = (cl.temp_f >= 95 || (rh !== null && (rh < 20 || rh > 65))) ? 'warn' : '';
+            var fanText = (cl.fans || []).map(function (f) {
+                return f.label + ' ' + (f.online ? (f.speed === null ? '?' : f.speed) + '/10' : 'offline') +
+                    (f.mode && f.mode !== 'On' ? ' (' + f.mode + ')' : '');
+            }).join(' · ');
+            card('Basement air', cl.temp_f.toFixed(1) + ' °F',
+                (rh === null ? '' : rh.toFixed(0) + '% RH') +
+                (cl.dew_point_f !== null && cl.dew_point_f !== undefined ? ', dew point ' + cl.dew_point_f.toFixed(0) + ' °F' : '') +
+                (rh !== null && rh < 20 ? ' (very dry: static risk)' : rh !== null && rh > 65 ? ' (humid: condensation risk)' : '') +
+                (fanText ? ' · fans ' + fanText : '') + ' · ' + ago(cl.fetched_at), airCls);
+        }
         var circuits = sm.pdu_circuits || [];
         if (circuits.length) {
             var applied = circuits.filter(function (c) { return c.state === 'applied'; }).length;
@@ -318,6 +332,10 @@
                 data: pts.map(function (p) { return kwOf((p.pdus_w || {})[n]); }) });
         });
         lineChart('fleetPowerChart', labels, power, 'kW');
+        lineChart('fleetClimateChart', labels, [
+            { label: 'Basement °F', data: pts.map(function (p) { return p.basement_temp_f; }) },
+            { label: 'Humidity %', data: pts.map(function (p) { return p.basement_humidity_pct; }) }
+        ], '');
         lineChart('fleetMoneyChart', labels, [
             { label: 'Expected', data: pts.map(function (p) { return p.expected_usd_day; }) },
             { label: 'Net incl. demand', data: pts.map(function (p) { return p.net_loaded_usd_day; }) },

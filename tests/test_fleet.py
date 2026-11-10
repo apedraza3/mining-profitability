@@ -18,7 +18,7 @@ os.environ["FLEET_DB"] = str(Path(_TMP) / "telemetry.db")
 os.environ["FLEET_OVERHEADS"] = str(Path(_TMP) / "none.json")
 
 from fleet import history, snmp, store, view  # noqa: E402
-from fleet.adapters import foreman, kryptex, lan_asic, pdu, vast  # noqa: E402
+from fleet.adapters import foreman, homeassistant, kryptex, lan_asic, pdu, vast  # noqa: E402
 from fleet.units import pay_rate_per_hs, to_hs  # noqa: E402
 
 
@@ -70,6 +70,31 @@ class Foreman(unittest.TestCase):
         self.assertEqual(foreman.pool_worker_name({"pools": [{"url": "u", "worker": "ATPTECHNOLOGY.L9Hosted1"}]}),
                          "L9Hosted1")
         self.assertIsNone(foreman.pool_worker_name({"pools": []}))
+
+
+class HomeAssistantClimate(unittest.TestCase):
+    def test_units_and_dew_point(self):
+        self.assertAlmostEqual(homeassistant.to_celsius(84.974, "°F"), 29.43, places=2)
+        self.assertEqual(homeassistant.to_celsius(20.0, "°C"), 20.0)
+        self.assertAlmostEqual(homeassistant.dew_point_c(20.0, 50.0), 9.3, places=1)
+        self.assertIsNone(homeassistant.dew_point_c(20.0, 0))
+
+    def test_poll(self):
+        states = {
+            "sensor.new_device_temperature": {"state": "84.974", "attributes": {"unit_of_measurement": "°F"},
+                                              "last_updated": "2026-11-10T22:00:00+00:00"},
+            "sensor.new_device_humidity": {"state": "13.66"},
+            "sensor.new_device_port_1_current_power": {"state": "6"},
+            "select.new_device_port_1_active_mode": {"state": "On"},
+            "binary_sensor.new_device_port_1_status": {"state": "on"},
+        }
+        with mock.patch.object(homeassistant.settings, "HA_TOKEN", "t"),                 mock.patch.object(homeassistant.settings, "HA_FAN_PORTS", "1:S8 A,2:S8 B"),                 mock.patch.object(homeassistant.HomeAssistantAdapter, "_state",
+                                  side_effect=lambda eid: states[eid] if eid in states else (_ for _ in ()).throw(KeyError(eid))):
+            out = homeassistant.HomeAssistantAdapter().poll()
+        c = out["accounts"]["climate:basement"]
+        self.assertEqual((c["temp_f"], c["humidity_pct"]), (85.0, 13.7))
+        self.assertEqual(c["fans"][0], {"port": 1, "label": "S8 A", "speed": 6.0, "mode": "On", "online": True})
+        self.assertEqual(c["fans"][1]["online"], False)  # port 2 missing -> offline, not an error
 
 
 class Vast(unittest.TestCase):
