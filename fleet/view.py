@@ -670,9 +670,9 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
 
     account_view = []
     for a in data["accounts"]:
-        if a["account_key"] in ("powerpool:payrates", "electricity:rates", "electricity:realtime",
-                                "kryptex:rates", "climate:basement", "fancontrol:basement")
-                or a["account_key"].startswith("gputemps:") or a["account_key"].startswith("pdu:"):
+        if (a["account_key"] in ("powerpool:payrates", "electricity:rates", "electricity:realtime",
+                                 "kryptex:rates", "climate:basement", "fancontrol:basement")
+                or a["account_key"].startswith(("gputemps:", "pdu:"))):
             continue
         d = a["data"]
         item = {"account": a["account_key"], "source": a["source"], "fetched_at": a["fetched_at"], "data": d}
