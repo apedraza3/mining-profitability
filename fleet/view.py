@@ -522,9 +522,11 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
             hashrate = device.get("hashrate_hs")
 
         location = (device or {}).get("location") or (inv or {}).get("_location", {}).get("name")
-        if device and device["source"] in RENTAL_SOURCES:
-            # Clore/Vast don't know where the box sits; the inventory does (for its power rate)
-            location = (inv or {}).get("_location", {}).get("name") or device["source"]
+        if device and device["source"] in RENTAL_SOURCES + ("foreman",):
+            # Clore/Vast don't know where the box sits, and Foreman's fixed label may not
+            # match the inventory's location name; the inventory decides (and sets the rate)
+            location = ((inv or {}).get("_location", {}).get("name") or device.get("location")
+                        or device["source"])
         is_home = (location or "").lower() == "home"
 
         watts, watts_quality = None, None
