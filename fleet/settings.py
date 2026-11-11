@@ -16,7 +16,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Owner-edited: support loads on the metered crypto circuits and which PDU circuit feeds
 # which machines. See data/fleet_overheads.example.json:
 # {"pdu_circuits": {"apc:Bank 1": ["Z11-1"]},
-#  "home": [{"label": "Immersion pump + dry cooler", "serves": ["Z15"], "max_w": 2500,
+#  "home": [{"label": "Immersion pump + dry cooler", "serves": ["Z15", "Z11-1", "Z11-2"], "max_w": 2500,
 #            "pdu": "chatsworth:CB1"}, {"label": "Server + workshop", "mining": false}]}
 FLEET_OVERHEADS = Path(os.getenv("FLEET_OVERHEADS", str(BASE_DIR / "data" / "fleet_overheads.json")))
 TELEMETRY_DB = Path(os.getenv("FLEET_DB", str(BASE_DIR / "data" / "telemetry.db")))
@@ -54,7 +54,7 @@ FAN_ASIC_C = os.getenv("FAN_ASIC_C", "70,85")        # ASIC chip C
 FAN_GPU_C = os.getenv("FAN_GPU_C", "70,83")          # GPU core C
 FAN_GPU_MEM_C = os.getenv("FAN_GPU_MEM_C", "85,98")  # GPU memory (HBM/GDDR) C
 FAN_GPU_HOT_C = os.getenv("FAN_GPU_HOT_C", "90,105")  # GPU hotspot/junction C (HiveOS jtemp)
-FAN_EXCLUDE = os.getenv("FAN_EXCLUDE", "Z15")        # immersion-cooled: room fans don't cool it
+FAN_EXCLUDE = os.getenv("FAN_EXCLUDE", "Z15,Z11-1,Z11-2")  # immersion-cooled (C6 tank): room fans don't cool them
 FAN_STALE_S = int(os.getenv("FAN_STALE_S", "600"))
 FAN_DOWN_HOLD_S = int(os.getenv("FAN_DOWN_HOLD_S", "600"))
 

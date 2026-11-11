@@ -6,7 +6,7 @@ Inputs (each mapped to 0..1 "heat demand" between a start and a full temperature
 - GPU core temps (gputemps:* accounts, or machine extra gpu_temps_c)  FAN_GPU_C   = 70,83  (deg C)
 - GPU memory temps (HBM/GDDR), from gputemps:*                         FAN_GPU_MEM_C = 85,98 (deg C)
 - GPU hotspot/junction temps, from gputemps:* (HiveOS jtemp)           FAN_GPU_HOT_C = 90,105 (deg C)
-Machines in FAN_EXCLUDE (default Z15: immersion-cooled) are ignored.
+Machines in FAN_EXCLUDE (default Z15, Z11-1, Z11-2: immersion-cooled in the C6 tank) are ignored.
 
 speed = FAN_MIN + demand x (FAN_MAX - FAN_MIN), on the controller's 0-10 scale.
 - Up immediately; down one step at a time, only after FAN_DOWN_HOLD_S of lower demand.
