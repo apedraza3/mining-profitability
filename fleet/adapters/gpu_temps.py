@@ -60,9 +60,10 @@ def parse_hiveos(text: str) -> dict:
     def pick(key):
         vals = data.get(key) or []
         return [_num(vals[i]) if i < len(vals) else None for i in keep]
-    # HiveOS reports memory/junction temperature as "mtemp" or "jtemp" depending on the card
-    mem_key = "mtemp" if any(_num(v) for v in data.get("mtemp") or []) else "jtemp"
-    return {"temps_c": pick("temp"), "mem_temps_c": pick(mem_key), "power_w": pick("power")}
+    # "mtemp" = memory temperature; "jtemp" = GPU hotspot/junction. On the CMP 100-210s jtemp
+    # reads ~20 C over the core (86-96 C) while nvidia-smi temperature.memory (HBM) is 63-73 C.
+    return {"temps_c": pick("temp"), "mem_temps_c": pick("mtemp"), "hotspot_temps_c": pick("jtemp"),
+            "power_w": pick("power")}
 
 
 class GpuTempsAdapter(Adapter):
