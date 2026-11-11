@@ -51,6 +51,12 @@ def compact(fleet: dict) -> dict:
         "dew_point_f": _r((sm.get("climate") or {}).get("dew_point_f"), 1),
         "fan_speed": {f["label"]: f.get("speed") for f in (sm.get("climate") or {}).get("fans") or []
                       if isinstance(f.get("speed"), (int, float))},
+        # Fan controller's decision (also in dry run) and every temperature it read, so a
+        # dry run can be judged afterwards and later tuning has temperature history.
+        "fan_target": (sm.get("fan_control") or {}).get("target"),
+        "fan_driver": ((sm.get("fan_control") or {}).get("driver") or {}).get("name"),
+        "temps": {i["name"]: i["value"] for i in (sm.get("fan_control") or {}).get("inputs") or []
+                  if i.get("name") and isinstance(i.get("value"), (int, float)) and not i.get("stale")},
     }
 
 

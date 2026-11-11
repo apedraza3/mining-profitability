@@ -482,7 +482,10 @@ class History(unittest.TestCase):
                              "demand_usd_day": 4, "net_loaded_usd_day": 26.1,
                              "home_power": {"measured_w": 9000, "accounted_w": 5000, "non_mining_w": 1500},
                              "solar": {"solar_w": 3000, "house_w": 11000, "mining_solar_credit_usd_day": 3.2},
-                             "pdus": [{"name": "apc", "total_w": 2700}, {"name": "bad", "error": "timeout"}]},
+                             "pdus": [{"name": "apc", "total_w": 2700}, {"name": "bad", "error": "timeout"}],
+                             "fan_control": {"target": 8, "driver": {"name": "Z11-2"},
+                                             "inputs": [{"name": "Z11-2", "value": 79.0, "stale": False},
+                                                        {"name": "rig", "value": 70.0, "stale": True}]}},
                  "machines": [{"kind": "asic", "running": True, "algorithm": "scrypt", "hashrate_hs": 5e9},
                               {"kind": "asic", "running": True, "algorithm": "scrypt", "hashrate_hs": 1e9},
                               {"kind": "overhead", "running": None}]}
@@ -490,6 +493,7 @@ class History(unittest.TestCase):
         self.assertEqual(c["expected_usd_day"], 80.12)
         self.assertEqual(c["pdus_w"], {"apc": 2700})
         self.assertEqual(c["hashrate_hs"], {"scrypt": 6e9})
+        self.assertEqual((c["fan_target"], c["fan_driver"], c["temps"]), (8, "Z11-2", {"Z11-2": 79.0}))
         store.record_snapshot(c, ts=iso(60))
         pts = history.series(1)["points"]
         self.assertEqual(len(pts), 1)
