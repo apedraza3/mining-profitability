@@ -462,6 +462,44 @@ def solar_summary(realtime, home_power, home_rate) -> dict | None:
     return out
 
 
+# Warn when the projected clock-hour average comes within this of the month's peak
+DEMAND_MARGIN_KW = 0.5
+
+
+def demand_status(peak_kw, now_w, hour_points, now=None, margin_kw=DEMAND_MARGIN_KW):
+    """CORE bills the month's highest clock-hour average grid import. Project the current
+    hour from its 5-minute snapshots so far plus the live reading (assumed to hold for the
+    rest of the hour) and compare with the month's peak so far."""
+    now = now or datetime.now(timezone.utc)
+    minutes = now.minute + now.second / 60
+    seen = [p["net_grid_w"] for p in hour_points if isinstance(p.get("net_grid_w"), (int, float))]
+    if now_w is None and not seen:
+        return None
+    so_far_w = sum(seen) / len(seen) if seen else now_w
+    live_w = now_w if now_w is not None else so_far_w
+    projected_w = (so_far_w * minutes + live_w * (60 - minutes)) / 60
+    out = {"hour_avg_kw": round(so_far_w / 1000, 2), "live_kw": round(live_w / 1000, 2),
+           "projected_kw": round(projected_w / 1000, 2), "minutes_into_hour": round(minutes),
+           "peak_kw": peak_kw}
+    if peak_kw:
+        headroom = peak_kw - projected_w / 1000
+        out["headroom_kw"] = round(headroom, 2)
+        out["status"] = "over" if headroom < 0 else "close" if headroom < margin_kw else "ok"
+    return out
+
+
+def _demand_block(elec, realtime, demand_rate):
+    hour_start = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).isoformat()
+    status = demand_status(elec.get("house_peak_kw"), (realtime or {}).get("net_grid_w"),
+                           store.read_snapshots(hour_start))
+    if status is None:
+        return None
+    status["demand_rate_kw_month"] = demand_rate
+    status["peak_basis"] = elec.get("peak_basis")
+    status["bill"] = elec.get("bill")
+    return status
+
+
 def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
     data = store.read_all()
     intervals = _intervals()
@@ -662,6 +700,7 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
         "pdu_circuits": pdu_circuits,
         "fan_control": (accounts.get("fancontrol:basement") or {}).get("data"),
         "alerts": (accounts.get("alerts:active") or {}).get("data"),
+        "demand": _demand_block(elec, realtime, demand_rate),
         "climate": ((accounts.get("climate:basement") or {}).get("data") or None) and
                    {**accounts["climate:basement"]["data"], "fetched_at": accounts["climate:basement"]["fetched_at"]},
         "btc_usd": btc_usd,

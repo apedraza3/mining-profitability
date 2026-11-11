@@ -147,6 +147,19 @@
                 (dp !== null && dp !== undefined ? ', dew point ' + dp.toFixed(0) + ' °F' : '') + dryness +
                 (fanText ? ' · fans ' + fanText : '') + ' · ' + ago(cl.fetched_at), airCls);
         }
+        var dm = sm.demand;
+        if (dm && dm.peak_kw) {
+            var dcls = dm.status === 'over' ? 'neg' : dm.status === 'close' ? 'warn' : '';
+            var dsub = 'this hour ' + dm.hour_avg_kw.toFixed(2) + ' kW so far, on track for ' +
+                dm.projected_kw.toFixed(2) + ' kW (' + dm.minutes_into_hour + ' min in)';
+            if (dm.status === 'over') dsub += ' · NEW PEAK: each extra kW adds $' +
+                (dm.demand_rate_kw_month || 0).toFixed(2) + ' to this month';
+            else if (dm.status === 'close') dsub += ' · close to the peak: hold off big loads this hour';
+            else dsub += ' · ' + dm.headroom_kw.toFixed(1) + ' kW headroom';
+            if (dm.bill && dm.bill.total_estimate) dsub += ' · bill estimate $' + Math.round(dm.bill.total_estimate) +
+                ' (demand $' + Math.round(dm.bill.demand_charge) + ')';
+            card('Demand peak (month)', dm.peak_kw.toFixed(2) + ' kW', dsub, dcls);
+        }
         var al = sm.alerts;
         if (al) {
             var act = al.active || [];

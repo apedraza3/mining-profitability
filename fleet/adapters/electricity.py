@@ -42,6 +42,10 @@ class ElectricityAdapter(Adapter):
             "marginal_energy_rate": round((energy + wpca) * (1 + tax), 5),
             "demand_rate_with_tax": round(demand * (1 + tax), 4),
             "house_peak_kw": bill.get("peak_demand_kw"),
+            "peak_basis": bill.get("peak_basis"),
+            "bill": {k: bill.get(k) for k in ("total_estimate", "demand_charge", "energy_charge",
+                                                "energy_kwh", "period_start_utc", "hours_measured",
+                                                "hours_in_period", "effective_rate_per_kwh")},
         }}
 
         rt = self._optional("/api/realtime")

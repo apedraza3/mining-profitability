@@ -41,6 +41,7 @@ def compact(fleet: dict) -> dict:
         "non_mining_w": _r(hp.get("non_mining_w"), 0),
         "solar_w": _r(solar.get("solar_w"), 0),
         "house_w": _r(solar.get("house_w"), 0),
+        "net_grid_w": _r(solar.get("net_grid_w"), 0),
         "pdus_w": {p["name"]: _r(p.get("total_w"), 0) for p in sm.get("pdus") or []
                    if p.get("name") and not p.get("error")},
         "hashrate_hs": hashrate,

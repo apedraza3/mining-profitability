@@ -25,7 +25,7 @@ REMIND_S = 6 * 3600
 HISTORY_DB = settings.BASE_DIR / "data" / "history.db"
 
 # Hold times (s) before alerting, by rule
-HOLD = {"down": 600, "temp": 300, "rental": 120, "source": 900, "fan": 300}
+HOLD = {"down": 600, "temp": 300, "rental": 120, "source": 900, "fan": 300, "demand": 240}
 
 # Limits; deliberately above normal operating temps (see the fan controller for the ramps)
 LIMITS = {"gpu_core": 85.0, "gpu_hotspot": 102.0, "gpu_mem": 90.0, "asic": 92.0, "air_f": 100.0}
@@ -79,6 +79,11 @@ def _problems(fleet: dict, snap: dict) -> list[tuple[str, str, str]]:
         if s.get("configured") and s.get("state") in ("error", "stale"):
             out.append((f"source:{s['source']}", "source",
                         f"Data source {s['source']} is {s['state']}: {(s.get('last_error') or '')[:120]}"))
+    dm = (fleet.get("summary") or {}).get("demand") or {}
+    if dm.get("status") in ("close", "over") and dm.get("minutes_into_hour", 0) >= 10:
+        out.append(("demand:hour", "demand",
+                    f"Demand: this hour is on track for {dm['projected_kw']:.1f} kW vs this month's peak "
+                    f"{dm['peak_kw']:.1f} kW. Hold off big loads (dryer, oven, extra rigs) until the hour ends."))
     fan = accounts.get("fancontrol:basement") or {}
     if fan.get("mode") == "on" and fan.get("error"):
         out.append(("fan:write", "fan", f"Fan control can't set the fans: {fan['error'][:120]}"))

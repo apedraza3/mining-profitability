@@ -414,6 +414,27 @@ class Alerts(unittest.TestCase):
         self.assertEqual(keys, {"down:Z11-1", "rental:LINUX_1c62", "source:pdu", "temp:rig58FCFE:hotspot"})
 
 
+class Demand(unittest.TestCase):
+    def test_projection_and_status(self):
+        t = datetime(2026, 11, 11, 3, 30, tzinfo=timezone.utc)   # half way through the hour
+        pts = [{"net_grid_w": 14000}, {"net_grid_w": 14000}]
+        ok = view.demand_status(15.28, 14000, pts, now=t)
+        self.assertEqual((ok["projected_kw"], ok["status"]), (14.0, "ok"))
+        close = view.demand_status(15.28, 15600, pts, now=t)    # (14 + 15.6) / 2 = 14.8, 0.48 kW left
+        self.assertEqual((close["projected_kw"], close["status"]), (14.8, "close"))
+        over = view.demand_status(15.28, 17000, pts, now=t)     # 15.5 > peak
+        self.assertEqual(over["status"], "over")
+        self.assertIsNone(view.demand_status(15.0, None, [], now=t))
+
+    def test_alert_needs_ten_minutes_into_the_hour(self):
+        def fleet(minutes):
+            return {"machines": [], "sources": [], "summary": {"demand": {
+                "status": "over", "minutes_into_hour": minutes, "projected_kw": 16, "peak_kw": 15}}}
+        snap = {"machines": [], "accounts": []}
+        self.assertEqual(alerts._problems(fleet(3), snap), [])
+        self.assertEqual([k for k, _, _ in alerts._problems(fleet(20), snap)], ["demand:hour"])
+
+
 class Solar(unittest.TestCase):
     def test_credit_uses_mining_share_of_house(self):
         realtime = {"solar_w": 3000, "house_w": 11000, "net_grid_w": 8000,
