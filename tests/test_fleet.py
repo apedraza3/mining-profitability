@@ -107,15 +107,20 @@ class GpuTemps(unittest.TestCase):
         self.assertEqual((p["temps_c"], p["mem_temps_c"], p["power_w"]), ([74.0, 78.0], [69.0, 70.0], [176.8, 180.56]))
 
     def test_parse_hiveos_skips_intel_igpu(self):
-        p = gpu_temps.parse_hiveos('{"temp":[0,73,77],"power":[0,118,114],"brand":["cpu","nvidia","nvidia"]}')
+        p = gpu_temps.parse_hiveos('{"temp":["0","73","77"],"power":["0","118","114"],'
+                                   '"brand":["cpu","nvidia","nvidia"],"jtemp":["0","92","96"]}')
         self.assertEqual(p["temps_c"], [73.0, 77.0])
+        self.assertEqual(p["mem_temps_c"], [92.0, 96.0])
 
     def test_fan_control_uses_gputemps_and_flags_failed_reads(self):
         snap = {"machines": [], "accounts": [
-            {"account_key": "gputemps:atp-gpu01", "fetched_at": iso(10), "data": {"name": "atp-gpu01", "temps_c": [74, 78]}},
+            {"account_key": "gputemps:atp-gpu01", "fetched_at": iso(10),
+             "data": {"name": "atp-gpu01", "temps_c": [74, 78], "mem_temps_c": [90, 96]}},
             {"account_key": "gputemps:rig58FCFE", "fetched_at": iso(10), "data": {"name": "rig58FCFE", "error": "timeout"}}]}
         inputs = {i["name"]: i for i in fan_control.collect_inputs(snap, FanControl.CFG)}
         self.assertEqual(inputs["atp-gpu01"]["value"], 78)
+        self.assertEqual(inputs["atp-gpu01 memory"]["value"], 96)
+        self.assertAlmostEqual(inputs["atp-gpu01 memory"]["demand"], 11 / 13)
         self.assertTrue(inputs["rig58FCFE"]["stale"])
 
 
@@ -330,6 +335,7 @@ class RentalRows(unittest.TestCase):
 
 class FanControl(unittest.TestCase):
     CFG = {"min": 4, "max": 10, "air_f": (80.0, 95.0), "asic_c": (70.0, 85.0), "gpu_c": (70.0, 83.0),
+           "gpu_mem_c": (85.0, 98.0),
            "exclude": ["Z15"], "stale_s": 600, "down_hold_s": 600}
 
     def snapshot(self, air_f=85.0, z11=75.0, z15=95.0, gpus=None, age=10):

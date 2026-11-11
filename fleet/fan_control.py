@@ -3,7 +3,8 @@
 Inputs (each mapped to 0..1 "heat demand" between a start and a full temperature):
 - hot-aisle air from the controller probe (climate:basement)          FAN_AIR_F   = 80,95  (deg F)
 - ASIC chip temps from the LAN reader (machine temp_max)              FAN_ASIC_C  = 70,85  (deg C)
-- GPU core temps (machines whose extra carries gpu_temps_c)           FAN_GPU_C   = 70,83  (deg C)
+- GPU core temps (gputemps:* accounts, or machine extra gpu_temps_c)  FAN_GPU_C   = 70,83  (deg C)
+- GPU memory / junction temps (HBM), from gputemps:*                   FAN_GPU_MEM_C = 85,98 (deg C)
 Machines in FAN_EXCLUDE (default Z15: immersion-cooled) are ignored.
 
 speed = FAN_MIN + demand x (FAN_MAX - FAN_MIN), on the controller's 0-10 scale.
@@ -69,9 +70,13 @@ def collect_inputs(snapshot: dict, cfg: dict) -> list[dict]:
             out.append({"name": d.get("name"), "kind": "gpu", "value": None, "unit": "°C",
                         "demand": None, "stale": True})
             continue
+        stale = age is None or age > cfg["stale_s"] or bool(d.get("error"))
         out.append({"name": d.get("name"), "kind": "gpu", "value": max(temps), "unit": "°C",
-                    "demand": ramp(max(temps), *cfg["gpu_c"]),
-                    "stale": age is None or age > cfg["stale_s"] or bool(d.get("error"))})
+                    "demand": ramp(max(temps), *cfg["gpu_c"]), "stale": stale})
+        mem = [t for t in d.get("mem_temps_c") or [] if isinstance(t, (int, float)) and t > 0]
+        if mem:  # HBM / memory junction runs hotter than the core and has its own limit
+            out.append({"name": f"{d.get('name')} memory", "kind": "gpu_mem", "value": max(mem),
+                        "unit": "°C", "demand": ramp(max(mem), *cfg["gpu_mem_c"]), "stale": stale})
     for m in snapshot.get("machines", []):
         if norm(m["name"]) in excluded or (m.get("location") not in (None, "home") and m["source"] != "lan"):
             continue
@@ -119,6 +124,7 @@ def config() -> dict:
         "air_f": _pair(settings.FAN_AIR_F, (80.0, 95.0)),
         "asic_c": _pair(settings.FAN_ASIC_C, (70.0, 85.0)),
         "gpu_c": _pair(settings.FAN_GPU_C, (70.0, 83.0)),
+        "gpu_mem_c": _pair(settings.FAN_GPU_MEM_C, (85.0, 98.0)),
         "exclude": [n.strip() for n in settings.FAN_EXCLUDE.split(",") if n.strip()],
         "stale_s": settings.FAN_STALE_S, "down_hold_s": settings.FAN_DOWN_HOLD_S,
     }
@@ -163,6 +169,6 @@ def tick():
         "inputs": inputs, "ports": ports, "controllable_ports": controllable, "wrote_ports": wrote,
         "error": error, "skipped_ports": [p for p in ports if p not in controllable],
         "limits": {"min": cfg["min"], "max": cfg["max"], "air_f": cfg["air_f"],
-                   "asic_c": cfg["asic_c"], "gpu_c": cfg["gpu_c"], "exclude": cfg["exclude"]},
+                   "asic_c": cfg["asic_c"], "gpu_c": cfg["gpu_c"], "gpu_mem_c": cfg["gpu_mem_c"], "exclude": cfg["exclude"]},
         "decided_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
     })

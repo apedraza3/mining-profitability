@@ -60,7 +60,9 @@ def parse_hiveos(text: str) -> dict:
     def pick(key):
         vals = data.get(key) or []
         return [_num(vals[i]) if i < len(vals) else None for i in keep]
-    return {"temps_c": pick("temp"), "mem_temps_c": pick("mtemp"), "power_w": pick("power")}
+    # HiveOS reports memory/junction temperature as "mtemp" or "jtemp" depending on the card
+    mem_key = "mtemp" if any(_num(v) for v in data.get("mtemp") or []) else "jtemp"
+    return {"temps_c": pick("temp"), "mem_temps_c": pick(mem_key), "power_w": pick("power")}
 
 
 class GpuTempsAdapter(Adapter):
