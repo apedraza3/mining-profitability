@@ -241,6 +241,21 @@ def pdu_circuit_readings(pdu_accounts) -> dict:
     return out
 
 
+def emporia_circuit_readings(realtime) -> dict:
+    """{"emporia:<circuit name>": reading} for Emporia branch CTs inside the sub-panel
+    (channel 0 is the sub-panel mains, which the reconciliation already uses)."""
+    if not realtime:
+        return {}
+    age = _age_s(realtime.get("measured_at"))
+    fresh = age is not None and age <= MEASURED_MAX_AGE_S
+    out = {}
+    for c in realtime.get("circuits") or []:
+        if str(c.get("channel")) in ("0", "None") or c.get("watts") is None or not c.get("name"):
+            continue
+        out[f"emporia:{c['name']}"] = {"watts": float(c["watts"]), "unit": "W", "fresh": fresh}
+    return out
+
+
 def _circuit_key(raw: str) -> str:
     return norm(raw.split(":", 1)[0]) + ":" + norm(raw.split(":", 1)[1]) if ":" in (raw or "") else norm(raw)
 
@@ -342,8 +357,9 @@ def reconcile_home_power(rows, realtime, home_rate, demand_rate, overheads=None,
     # unmeasured ones (and for "unexplained") is as small as possible.
     for load in loads:
         load.pop("_measured", None)
-        if load.get("pdu") and readings:
-            key, reading = _find_circuit(readings, load["pdu"])
+        source = load.get("circuit") or load.get("pdu")   # "emporia:C6 Immersion" or "chatsworth:CB1"
+        if source and readings:
+            key, reading = _find_circuit(readings, source)
             if reading and reading["fresh"]:
                 load["_measured"] = (key, reading)
     loads.sort(key=lambda l: "_measured" not in l)
@@ -670,6 +686,7 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
     overheads = load_overheads()
     pdu_accounts = [a for a in data["accounts"] if a["account_key"].startswith("pdu:")]
     readings = pdu_circuit_readings(pdu_accounts)
+    readings.update(emporia_circuit_readings(realtime))
     pdu_circuits = apply_pdu_circuits(rows, readings, overheads.get("pdu_circuits"),
                                       home_rate, demand_rate)
     home_power = reconcile_home_power(rows, realtime, home_rate, demand_rate, overheads, readings)

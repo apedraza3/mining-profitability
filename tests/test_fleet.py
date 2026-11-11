@@ -272,6 +272,19 @@ class Reconcile(unittest.TestCase):
         self.assertEqual(info["accounted_w"], 4000)
         self.assertEqual([(l["label"], l["watts"]) for l in info["loads"]], [("C6", 1000)])
 
+    def test_emporia_branch_ct_measures_a_load(self):
+        realtime = {"crypto_mining_w": 9878, "measured_at": iso(10), "circuits": [
+            {"channel": 0, "name": "Crypto Sub-Panel", "watts": 9878},
+            {"channel": "1", "name": "C6 Immersion", "watts": 1150}]}
+        readings = view.emporia_circuit_readings(realtime)
+        self.assertEqual(list(readings), ["emporia:C6 Immersion"])
+        rows = [machine("Z15", 1500)]
+        overheads = {"home": [{"label": "C6", "serves": ["Z15"], "max_w": 2500, "circuit": "emporia:C6 Immersion"},
+                              {"label": "Server", "mining": False}]}
+        info = view.reconcile_home_power(rows, realtime, 0.1, 16.41, overheads, readings)
+        self.assertEqual([(l["label"], l["watts"], l["measured"]) for l in info["loads"]],
+                         [("C6", 1150, True), ("Server", 7228, False)])
+
     def test_off_meter_machines_are_excluded(self):
         rows = [machine("Z15", 1500), machine("Garage rig", 3000)]
         info = view.reconcile_home_power(rows, self.realtime(1500), 0.1, 16.41,
