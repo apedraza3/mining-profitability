@@ -308,8 +308,12 @@ def reconcile_home_power(rows, realtime, home_rate, demand_rate, overheads=None,
     - meter lower: report only (some machines may be on unmonitored circuits).
     Returns the summary block; mutates and may append to rows.
     """
+    # Every home machine on the metered sub-panel counts, rental servers included (the Clore
+    # G481 is on it). Machines listed in fleet_overheads.json "off_meter" are on other circuits.
+    off_meter = {norm(n) for n in (overheads or {}).get("off_meter") or []}
     home = [r for r in rows if (r.get("location") or "").lower() == "home"
-            and r.get("kind") != "rental_server"]
+            and r.get("kind") not in ("overhead", "unattributed", "non_mining")
+            and norm(r["name"]) not in off_meter]
     accounted = sum(r["watts"] or 0 for r in home)
     info = {"measured_w": None, "accounted_w": round(accounted), "gap_w": None,
             "measured_at": None, "mode": "no meter",

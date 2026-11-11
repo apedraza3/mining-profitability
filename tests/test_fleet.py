@@ -262,6 +262,22 @@ class Reconcile(unittest.TestCase):
         server = next(r for r in rows if r["name"] == "Server + workshop")
         self.assertIsNone(server["net_loaded_usd_day"])  # kept out of the mining P&L
 
+    def test_home_rental_server_counts_against_the_meter(self):
+        rental = machine("G481", 2500, quality="estimated (nameplate)")
+        rental["kind"] = "rental_server"
+        rows = [machine("Z15", 1500), rental]
+        overheads = {"home": [{"label": "C6", "serves": ["Z15"], "max_w": 2500},
+                              {"label": "Server", "mining": False}]}
+        info = view.reconcile_home_power(rows, self.realtime(5000), 0.1, 16.41, overheads)
+        self.assertEqual(info["accounted_w"], 4000)
+        self.assertEqual([(l["label"], l["watts"]) for l in info["loads"]], [("C6", 1000)])
+
+    def test_off_meter_machines_are_excluded(self):
+        rows = [machine("Z15", 1500), machine("Garage rig", 3000)]
+        info = view.reconcile_home_power(rows, self.realtime(1500), 0.1, 16.41,
+                                         {"off_meter": ["Garage rig"]})
+        self.assertEqual(info["accounted_w"], 1500)
+
     def test_pdu_measured_load_replaces_gap_share(self):
         rows = [machine("Z15", 1500)]
         overheads = {"home": [{"label": "C6 cooling", "serves": ["Z15"], "pdu": "chatsworth:CB1"},
