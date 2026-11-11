@@ -55,6 +55,14 @@ CREATE TABLE IF NOT EXISTS samples (
     PRIMARY KEY (machine_key, ts)
 ) WITHOUT ROWID;
 
+-- One row per completed UTC hour, kept forever (raw snapshots/samples are purged after
+-- SAMPLE_RETENTION_DAYS): averages, peaks, kWh and per-machine averages for long-range
+-- history and, later, the optimizer/AI.
+CREATE TABLE IF NOT EXISTS fleet_hourly (
+    hour TEXT PRIMARY KEY,          -- "YYYY-MM-DDTHH:00:00+00:00"
+    data TEXT NOT NULL
+) WITHOUT ROWID;
+
 -- Fleet-wide totals every few minutes (meter, PDUs, solar, $/day), for the history charts
 CREATE TABLE IF NOT EXISTS fleet_snapshots (
     ts TEXT PRIMARY KEY,
@@ -178,14 +186,55 @@ def record_snapshot(data: dict, ts: str | None = None):
                      (ts or utcnow(), json.dumps(data)))
 
 
-def read_snapshots(since_iso: str) -> list[dict]:
-    """[{"ts", **data}] since the given time, oldest first. Empty before the first one."""
+def last_hourly() -> str | None:
+    with connect(readonly=True) as conn:
+        if conn is None:
+            return None
+        try:
+            row = conn.execute("SELECT MAX(hour) FROM fleet_hourly").fetchone()
+        except sqlite3.OperationalError:
+            return None
+    return row[0] if row else None
+
+
+def write_hourly(hour_iso: str, data: dict):
+    with connect() as conn:
+        conn.execute("INSERT OR REPLACE INTO fleet_hourly (hour, data) VALUES (?, ?)",
+                     (hour_iso, json.dumps(data)))
+
+
+def read_hourly(since_iso: str) -> list[dict]:
     with connect(readonly=True) as conn:
         if conn is None:
             return []
         try:
-            rows = conn.execute("SELECT ts, data FROM fleet_snapshots WHERE ts >= ? ORDER BY ts",
+            rows = conn.execute("SELECT hour, data FROM fleet_hourly WHERE hour >= ? ORDER BY hour",
                                 (since_iso,)).fetchall()
+        except sqlite3.OperationalError:
+            return []
+    return [{"ts": r["hour"], **json.loads(r["data"])} for r in rows]
+
+
+def read_samples(since_iso: str, until_iso: str) -> list[dict]:
+    with connect(readonly=True) as conn:
+        if conn is None:
+            return []
+        try:
+            rows = conn.execute("SELECT machine_key, ts, hashrate_hs, watts, running FROM samples "
+                                "WHERE ts >= ? AND ts < ?", (since_iso, until_iso)).fetchall()
+        except sqlite3.OperationalError:
+            return []
+    return [dict(r) for r in rows]
+
+
+def read_snapshots(since_iso: str, until_iso: str | None = None) -> list[dict]:
+    """[{"ts", **data}] in [since, until), oldest first. Empty before the first one."""
+    with connect(readonly=True) as conn:
+        if conn is None:
+            return []
+        try:
+            rows = conn.execute("SELECT ts, data FROM fleet_snapshots WHERE ts >= ? AND ts < ? "
+                                "ORDER BY ts", (since_iso, until_iso or "9999")).fetchall()
         except sqlite3.OperationalError:
             return []
     return [{"ts": r["ts"], **json.loads(r["data"])} for r in rows]

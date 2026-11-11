@@ -445,6 +445,23 @@ class History(unittest.TestCase):
         self.assertEqual(len(pts), 1)
         self.assertEqual(pts[0]["meter_w"], 9000)
 
+    def test_hourly_rollup_backfills_and_is_permanent(self):
+        store.init_db()
+        base = datetime(2026, 11, 9, 10, tzinfo=timezone.utc)
+        for i in range(30):  # 10:00-12:25 every 5 min
+            store.record_snapshot({"meter_w": 9000 + 100 * (i % 12), "net_loaded_usd_day": 20.0},
+                                  ts=(base + timedelta(minutes=5 * i)).isoformat())
+        with store.connect() as c:
+            c.execute("INSERT INTO samples VALUES (?,?,?,?,?)",
+                      ("lan:Z11-1", (base + timedelta(minutes=7)).isoformat(), 1.1e5, 1246, 1))
+        self.assertEqual(history.rollup(now=base + timedelta(hours=2, minutes=30)), 2)  # 12:00 still open
+        h10 = [h for h in store.read_hourly("0000") if h["ts"].startswith("2026-11-09T10")][0]
+        self.assertEqual(h10["points"], 12)
+        self.assertEqual((h10["meter_w_max"], h10["meter_w_min"]), (10100, 9000))
+        self.assertAlmostEqual(h10["meter_kwh"], 9.55)
+        self.assertEqual(h10["machines"]["lan:Z11-1"]["watts"], 1246)
+        self.assertEqual(history.rollup(now=base + timedelta(hours=2, minutes=30)), 0)  # idempotent
+
     def test_bucket_average(self):
         t0 = datetime(2026, 11, 9, tzinfo=timezone.utc)
         pts = [{"ts": (t0 + timedelta(minutes=5 * i)).isoformat(), "meter_w": 1000 * i,

@@ -53,6 +53,7 @@ def main():
     next_snapshot = time.monotonic() + 90
     next_fan = time.monotonic() + 75
     next_alert = time.monotonic() + 120
+    next_rollup = time.monotonic() + 180
     logger.info("Fleet poller started with sources: %s", ", ".join(a.name for a in adapters))
 
     while True:
@@ -87,6 +88,14 @@ def main():
             except Exception as e:  # never stop polling because of alerting
                 logger.warning("Alerts failed: %s", e)
             next_alert = now + alerts.ALERT_EVERY_S
+        if now >= next_rollup:
+            try:
+                n = history.rollup()
+                if n:
+                    logger.info("Rolled up %d hour(s) of history", n)
+            except Exception as e:
+                logger.warning("History rollup failed: %s", e)
+            next_rollup = now + 600
         time.sleep(TICK_S)
 
 

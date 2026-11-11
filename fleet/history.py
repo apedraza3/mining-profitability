@@ -103,9 +103,71 @@ def _bucket_avg(points: list[dict], bucket_s: int) -> list[dict]:
     return out
 
 
+def _hour(dt: datetime) -> datetime:
+    return dt.replace(minute=0, second=0, microsecond=0)
+
+
+def summarize_hour(points: list[dict], samples: list[dict]) -> dict:
+    """Averages of every snapshot field, plus peak/min meter power, kWh and per-machine means."""
+    avg = _bucket_avg(points, 3600)[0] if points else {}
+    avg.pop("ts", None)
+    meter = [p["meter_w"] for p in points if isinstance(p.get("meter_w"), (int, float))]
+    out = {**avg, "points": len(points)}
+    if meter:
+        out.update(meter_w_max=max(meter), meter_w_min=min(meter),
+                   meter_kwh=round(sum(meter) / len(meter) / 1000, 3))
+    per = {}
+    for s in samples:
+        m = per.setdefault(s["machine_key"], {"hs": [], "w": [], "run": []})
+        if isinstance(s.get("hashrate_hs"), (int, float)):
+            m["hs"].append(s["hashrate_hs"])
+        if isinstance(s.get("watts"), (int, float)):
+            m["w"].append(s["watts"])
+        if s.get("running") is not None:
+            m["run"].append(1 if s["running"] else 0)
+    out["machines"] = {k: {"hashrate_hs": round(sum(v["hs"]) / len(v["hs"]), 2) if v["hs"] else None,
+                           "watts": round(sum(v["w"]) / len(v["w"]), 1) if v["w"] else None,
+                           "uptime": round(sum(v["run"]) / len(v["run"]), 3) if v["run"] else None}
+                       for k, v in per.items()}
+    return out
+
+
+def rollup(now: datetime | None = None, max_hours: int = 24 * 120) -> int:
+    """Write every completed hour not yet rolled up (backfills from the oldest snapshot)."""
+    now = now or datetime.now(timezone.utc)
+    last = store.last_hourly()
+    if last:
+        start = datetime.fromisoformat(last) + timedelta(hours=1)
+    else:
+        first = store.read_snapshots("0000")[:1]
+        if not first:
+            return 0
+        start = _hour(datetime.fromisoformat(first[0]["ts"]))
+    end = _hour(now)                      # the current hour is still in progress
+    written, hour = 0, start
+    while hour < end and written < max_hours:
+        nxt = hour + timedelta(hours=1)
+        lo, hi = hour.isoformat(), nxt.isoformat()
+        points = store.read_snapshots(lo, hi)
+        if points:
+            store.write_hourly(lo, summarize_hour(points, store.read_samples(lo, hi)))
+            written += 1
+        hour = nxt
+    return written
+
+
 def series(hours: int) -> dict:
-    hours = max(1, min(int(hours), settings.SAMPLE_RETENTION_DAYS * 24))
+    hours = max(1, min(int(hours), 24 * 366 * 5))
     since = (datetime.now(timezone.utc) - timedelta(hours=hours)).replace(microsecond=0).isoformat()
+    if hours > 24 * 30:
+        # Beyond a month: the permanent hourly rollups (raw snapshots are purged after
+        # SAMPLE_RETENTION_DAYS), bucketed down to MAX_POINTS
+        points = [{k: v for k, v in p.items() if k != "machines"} for p in store.read_hourly(since)]
+        bucket_s = 3600
+        if len(points) > MAX_POINTS:
+            bucket_s = max(3600, (hours * 3600) // MAX_POINTS)
+            points = _bucket_avg(points, bucket_s)
+        return {"hours": hours, "bucket_s": bucket_s, "points": points, "source": "hourly"}
     points = store.read_snapshots(since)
     bucket_s = SNAPSHOT_EVERY_S
     if len(points) > MAX_POINTS:
