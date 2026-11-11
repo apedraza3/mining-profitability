@@ -53,15 +53,19 @@ def compact(fleet: dict) -> dict:
     }
 
 
-def take_snapshot():
-    """Build the fleet view the way the web app does and store its compact totals."""
+def _build_with_inventory() -> dict:
+    """build_fleet() the way the web app does it, reading the inventory from data/."""
     from fleet.view import build_fleet
     from services.inventory_manager import InventoryManager
 
     data_dir = settings.BASE_DIR / "data"
     inv = InventoryManager(str(data_dir / "inventory.json"), str(data_dir / "locations.json"))
-    fleet = build_fleet(inv.get_all_miners(), inv.get_all_locations())
-    store.record_snapshot(compact(fleet))
+    return build_fleet(inv.get_all_miners(), inv.get_all_locations())
+
+
+def take_snapshot():
+    """Store the compact totals of the current fleet view."""
+    store.record_snapshot(compact(_build_with_inventory()))
 
 
 def _bucket_avg(points: list[dict], bucket_s: int) -> list[dict]:

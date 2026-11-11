@@ -17,7 +17,7 @@ _TMP = tempfile.mkdtemp()
 os.environ["FLEET_DB"] = str(Path(_TMP) / "telemetry.db")
 os.environ["FLEET_OVERHEADS"] = str(Path(_TMP) / "none.json")
 
-from fleet import fan_control, history, snmp, store, view  # noqa: E402
+from fleet import alerts, fan_control, history, snmp, store, view  # noqa: E402
 from fleet.adapters import foreman, gpu_temps, homeassistant, kryptex, lan_asic, pdu, vast  # noqa: E402
 from fleet.units import pay_rate_per_hs, to_hs  # noqa: E402
 
@@ -380,6 +380,38 @@ class FanControl(unittest.TestCase):
         target, driver, reason = fan_control.decide(inputs, 5, self.CFG, 0, {"lower_since": None})
         self.assertEqual((target, driver), (10, None))
         self.assertIn("fail safe", reason)
+
+
+class Alerts(unittest.TestCase):
+    def test_hold_remind_resolve(self):
+        st, hold = {}, {"down": 600}
+        p = [("down:Z11-1", "down", "Z11-1 is not running")]
+        self.assertEqual(alerts.evaluate(p, 0, st, hold, 3600)[0], [])          # just started
+        self.assertEqual(alerts.evaluate(p, 599, st, hold, 3600)[0], [])        # still holding
+        self.assertEqual(alerts.evaluate(p, 600, st, hold, 3600)[0], ["⚠️ Z11-1 is not running"])
+        self.assertEqual(alerts.evaluate(p, 900, st, hold, 3600)[0], [])        # no repeat yet
+        self.assertEqual(alerts.evaluate(p, 4200, st, hold, 3600)[0], ["⏰ still: Z11-1 is not running"])
+        msgs, active = alerts.evaluate([], 4300, st, hold, 3600)
+        self.assertEqual((msgs, active), (["✅ resolved: Z11-1 is not running"], []))
+
+    def test_blip_never_alerts(self):
+        st = {}
+        alerts.evaluate([("down:x", "down", "x down")], 0, st, {"down": 600}, 3600)
+        self.assertEqual(alerts.evaluate([], 120, st, {"down": 600}, 3600)[0], [])  # cleared before hold
+
+    def test_problems(self):
+        fleet = {"machines": [
+            {"name": "Z11-1", "kind": "asic", "running": False, "status": "dead", "sources": ["lan"], "stale_sources": []},
+            {"name": "DG1", "kind": "asic", "running": False, "status": "off", "sources": ["powerpool"],
+             "stale_sources": [], "inventory_status": "inactive"},
+            {"name": "LINUX_1c62", "kind": "rental_server", "running": True, "status": "online, not rented",
+             "sources": ["clore"], "stale_sources": []}],
+            "sources": [{"source": "pdu", "configured": 1, "state": "error", "last_error": "timed out"}]}
+        snap = {"machines": [], "accounts": [
+            {"account_key": "gputemps:rig58FCFE", "data": {"name": "rig58FCFE", "temps_c": [77, 80],
+                                                          "hotspot_temps_c": [96, 103]}}]}
+        keys = {k for k, _, _ in alerts._problems(fleet, snap)}
+        self.assertEqual(keys, {"down:Z11-1", "rental:LINUX_1c62", "source:pdu", "temp:rig58FCFE:hotspot"})
 
 
 class Solar(unittest.TestCase):

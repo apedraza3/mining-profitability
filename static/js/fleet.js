@@ -147,6 +147,16 @@
                 (dp !== null && dp !== undefined ? ', dew point ' + dp.toFixed(0) + ' °F' : '') + dryness +
                 (fanText ? ' · fans ' + fanText : '') + ' · ' + ago(cl.fetched_at), airCls);
         }
+        var al = sm.alerts;
+        if (al) {
+            var act = al.active || [];
+            card('Alerts', act.length ? act.length + ' active' : 'all clear',
+                (act.length ? act.map(function (a) { return a.message; }).join(' · ') + ' · ' : '') +
+                (al.channels && al.channels.length ? 'sending to ' + al.channels.join(', ')
+                    : 'no channel yet: set Telegram or Discord in the dashboard Alert settings') +
+                (al.send_errors && al.send_errors.length ? ' · send failed: ' + al.send_errors.join('; ') : ''),
+                act.length || (al.send_errors && al.send_errors.length) ? 'warn' : '');
+        }
         var fc = sm.fan_control;
         if (fc && fc.mode && fc.mode !== 'off') {
             var drv = fc.driver ? fc.driver.name + ' ' + fc.driver.value + (fc.driver.unit || '') : 'no data';

@@ -8,7 +8,7 @@ where the view marks it stale. One source failing never stops the others.
 import logging
 import time
 
-from fleet import fan_control, history, store
+from fleet import alerts, fan_control, history, store
 from fleet.adapters import all_adapters
 
 logger = logging.getLogger("fleet.poller")
@@ -52,6 +52,7 @@ def main():
     # First snapshot after every source has had a chance to report once
     next_snapshot = time.monotonic() + 90
     next_fan = time.monotonic() + 75
+    next_alert = time.monotonic() + 120
     logger.info("Fleet poller started with sources: %s", ", ".join(a.name for a in adapters))
 
     while True:
@@ -80,6 +81,12 @@ def main():
             except Exception as e:  # never stop polling because of fan control
                 logger.warning("Fan control failed: %s", e)
             next_fan = now + 60
+        if now >= next_alert:
+            try:
+                alerts.tick()
+            except Exception as e:  # never stop polling because of alerting
+                logger.warning("Alerts failed: %s", e)
+            next_alert = now + alerts.ALERT_EVERY_S
         time.sleep(TICK_S)
 
 
