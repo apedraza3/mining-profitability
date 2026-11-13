@@ -12,7 +12,7 @@ import logging
 import re
 from datetime import datetime, timezone
 
-from fleet import settings, store
+from fleet import settings, store, tariff
 from fleet.adapters import all_adapters
 from fleet.units import to_hs
 
@@ -508,16 +508,42 @@ def demand_status(peak_kw, now_w, hour_points, now=None, margin_kw=DEMAND_MARGIN
     return out
 
 
-def _demand_block(elec, realtime, demand_rate):
-    hour_start = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).isoformat()
-    status = demand_status(elec.get("house_peak_kw"), (realtime or {}).get("net_grid_w"),
-                           store.read_snapshots(hour_start))
-    if status is None:
+def tariff_summary(period: dict | None) -> dict | None:
+    """Rate-plan comparison for the current billing period (see fleet/tariff.py)."""
+    if not period or not period.get("hours"):
         return None
-    status["demand_rate_kw_month"] = demand_rate
-    status["peak_basis"] = elec.get("peak_basis")
-    status["bill"] = elec.get("bill")
-    return status
+    try:
+        return tariff.summarize(settings.CORE_SCHEDULE, period["hours"], period.get("period_start_utc"),
+                                period.get("hours_in_period"), period.get("wpca") or 0,
+                                period.get("tax") or 0, peak_floor_kw=period.get("house_peak_kw"))
+    except Exception as e:  # never let a rate-table problem break the page
+        logger.warning("Tariff summary failed: %s", e)
+        return None
+
+
+def _demand_block(elec, realtime, demand_rate, tariff_info=None):
+    """Watch every peak the current plan bills right now: the any-hour peak, and on CT/A the
+    4-8 PM peak during that window (it is usually lower, so it is the one to protect)."""
+    hour_start = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).isoformat()
+    points = store.read_snapshots(hour_start)
+    now_w = (realtime or {}).get("net_grid_w")
+    tax = 1 + ((tariff_info or {}).get("tax") or 0)
+    watched = [b for b in (tariff_info or {}).get("billed_peaks_now") or [] if b.get("peak_kw") is not None]
+    if not watched:
+        watched = [{"which": "any", "peak_kw": elec.get("house_peak_kw"), "rate": None}]
+    best = None
+    for b in watched:
+        st = demand_status(b["peak_kw"], now_w, points)
+        if st is None:
+            return None
+        st["which_peak"] = b["which"]
+        st["demand_rate_kw_month"] = round(b["rate"] * tax, 2) if b.get("rate") else demand_rate
+        if best is None or st.get("headroom_kw", 1e9) < best.get("headroom_kw", 1e9):
+            best = st
+    best["peak_basis"] = elec.get("peak_basis")
+    best["bill"] = elec.get("bill")
+    best["schedule"] = (tariff_info or {}).get("schedule")
+    return best
 
 
 def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
@@ -683,6 +709,7 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
     rows.extend(_inventory_only_rows(inventory_miners, inventory_locations, matched_inventory_ids,
                                      rates, btc_usd, home_rate, demand_rate))
     realtime = (accounts.get("electricity:realtime") or {}).get("data")
+    tariff_info = tariff_summary((accounts.get("electricity:period") or {}).get("data"))
     overheads = load_overheads()
     pdu_accounts = [a for a in data["accounts"] if a["account_key"].startswith("pdu:")]
     readings = pdu_circuit_readings(pdu_accounts)
@@ -721,7 +748,8 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
         "pdu_circuits": pdu_circuits,
         "fan_control": (accounts.get("fancontrol:basement") or {}).get("data"),
         "alerts": (accounts.get("alerts:active") or {}).get("data"),
-        "demand": _demand_block(elec, realtime, demand_rate),
+        "demand": _demand_block(elec, realtime, demand_rate, tariff_info),
+        "tariff": tariff_info,
         "climate": ((accounts.get("climate:basement") or {}).get("data") or None) and
                    {**accounts["climate:basement"]["data"], "fetched_at": accounts["climate:basement"]["fetched_at"]},
         "btc_usd": btc_usd,

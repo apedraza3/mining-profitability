@@ -75,5 +75,8 @@ LAN_MINERS = [
     if "=" in item
 ]
 
+# CORE rate plan the account is on: C, CT, A, AT or SG1 (fleet/tariff.py)
+CORE_SCHEDULE = os.getenv("CORE_SCHEDULE", "C").strip().upper()
+
 # Electricity dashboard (home marginal rate and demand)
 ELECTRICITY_API_URL = os.getenv("ELECTRICITY_API_URL", "http://127.0.0.1:5001")

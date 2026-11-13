@@ -158,7 +158,24 @@
             else dsub += ' · ' + dm.headroom_kw.toFixed(1) + ' kW headroom';
             if (dm.bill && dm.bill.total_estimate) dsub += ' · bill estimate $' + Math.round(dm.bill.total_estimate) +
                 ' (demand $' + Math.round(dm.bill.demand_charge) + ')';
-            card('Demand peak (month)', dm.peak_kw.toFixed(2) + ' kW', dsub, dcls);
+            var which = dm.which_peak === 'onpeak' ? 'Demand peak (4-8 PM)' : 'Demand peak (month)';
+            card(which, dm.peak_kw.toFixed(2) + ' kW', dsub, dcls);
+        }
+        var tf = sm.tariff;
+        if (tf && tf.plans && tf.plans.length) {
+            var cur = tf.plans.filter(function (p) { return p.code === tf.schedule; })[0];
+            var others = tf.plans.filter(function (p) { return p.code !== tf.schedule; })
+                .map(function (p) { return p.code + ' $' + Math.round(p.month_usd); }).join(', ');
+            var pk = tf.peaks || {};
+            var tsub = 'this month on ' + tf.schedule + ': $' + Math.round(cur ? cur.month_usd : 0) +
+                ' · other plans: ' + others +
+                ' · peaks: any hour ' + (pk.any ? pk.any.kw.toFixed(1) : '—') + ' kW, 4-8 PM ' +
+                (pk.onpeak ? pk.onpeak.kw.toFixed(1) : '—') + ' kW · ' + tf.hours_measured + ' of ' +
+                Math.round(tf.hours_in_period) + ' h measured' +
+                (tf.next_rates ? ' · new rates from ' + tf.next_rates.effective : '');
+            var tcls = tf.cheapest !== tf.schedule && tf.save_month_usd > 5 ? 'warn' : '';
+            card('Rate plan', tf.cheapest === tf.schedule ? tf.schedule + ' is cheapest'
+                : tf.cheapest + ' saves $' + Math.round(tf.save_month_usd) + '/mo', tsub, tcls);
         }
         var al = sm.alerts;
         if (al) {

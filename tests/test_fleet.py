@@ -17,7 +17,7 @@ _TMP = tempfile.mkdtemp()
 os.environ["FLEET_DB"] = str(Path(_TMP) / "telemetry.db")
 os.environ["FLEET_OVERHEADS"] = str(Path(_TMP) / "none.json")
 
-from fleet import alerts, fan_control, history, snmp, store, view  # noqa: E402
+from fleet import alerts, fan_control, history, snmp, store, tariff, view  # noqa: E402
 from fleet.adapters import foreman, gpu_temps, homeassistant, kryptex, lan_asic, pdu, vast  # noqa: E402
 from fleet.units import pay_rate_per_hs, to_hs  # noqa: E402
 
@@ -523,6 +523,74 @@ class History(unittest.TestCase):
         out = history._bucket_avg(pts, 600)  # two 10-minute buckets
         self.assertEqual([p["meter_w"] for p in out], [500, 2500])
         self.assertEqual(out[1]["pdus_w"], {"apc": 250})
+
+
+class Tariff(unittest.TestCase):
+    START = "2026-11-01T06:00:00"  # Nov 1 00:00 Denver (MDT -> MST on Nov 1, still 06:00Z at midnight)
+
+    def hours(self, n, kw=10.0, bump=None):
+        """n hourly rows from the period start; bump = {utc hour index: kW}."""
+        base = datetime(2026, 11, 1, 6, tzinfo=timezone.utc)
+        out = []
+        for i in range(n):
+            t = (base + timedelta(hours=i)).strftime("%Y-%m-%d %H:00:00")
+            out.append([t, (bump or {}).get(i, kw) * 1000])
+        return out
+
+    def test_onpeak_uses_denver_time(self):
+        # 23:00Z on Nov 2 is 16:00 MST (on-peak); 22:00Z is 15:00 (off)
+        self.assertTrue(tariff.is_onpeak(datetime(2026, 11, 2, 23, tzinfo=timezone.utc)))
+        self.assertFalse(tariff.is_onpeak(datetime(2026, 11, 2, 22, tzinfo=timezone.utc)))
+
+    def test_peaks_split_any_and_onpeak(self):
+        rows = self.hours(48, bump={7: 15.0, 41: 12.0})  # 13:00Z Nov1 (07:00 local), 23:00Z Nov2 (16:00)
+        pk = tariff.peaks(tariff.parse_hours(rows))
+        self.assertEqual(pk["any"]["kw"], 15.0)
+        self.assertEqual(pk["onpeak"]["kw"], 12.0)
+
+    def test_ct_never_costs_more_than_c(self):
+        for bump in ({7: 15.0, 41: 12.0}, {41: 15.0}, {}):
+            info = tariff.summarize("C", self.hours(72, bump=bump), self.START, 720, 0.00379, 0.067,
+                                    now=datetime(2026, 11, 4, tzinfo=timezone.utc))
+            by = {p["code"]: p for p in info["plans"]}
+            self.assertLessEqual(by["CT"]["month_usd"], by["C"]["month_usd"] + 0.01)
+        # Peak outside 4-8 PM: CT saves 7.53 x (15 - 12) x 1.067
+        info = tariff.summarize("C", self.hours(72, bump={7: 15.0, 41: 12.0}), self.START, 720, 0, 0.067,
+                                now=datetime(2026, 11, 4, tzinfo=timezone.utc))
+        by = {p["code"]: p for p in info["plans"]}
+        self.assertAlmostEqual(by["C"]["month_usd"] - by["CT"]["month_usd"], 7.53 * 3 * 1.067, places=1)
+
+    def test_flat_load_matches_hand_calc_on_c(self):
+        info = tariff.summarize("C", self.hours(720, kw=10.0), self.START, 720, 0.00379, 0.067,
+                                now=datetime(2026, 12, 1, tzinfo=timezone.utc))
+        c = next(p for p in info["plans"] if p["code"] == "C")
+        expect = (20 + 7200 * 0.08907 + 10 * 15.38 + 7200 * 0.00379) * 1.067
+        self.assertAlmostEqual(c["month_usd"], expect, places=1)
+        self.assertEqual(info["schedule"], "C")
+        self.assertEqual(info["plans"][0]["code"], info["cheapest"])
+
+    def test_projection_and_floor_peak(self):
+        # 72 of 720 hours seen -> energy x10; an earlier 16 kW peak from the dashboard is honoured
+        info = tariff.summarize("C", self.hours(72, kw=10.0), self.START, 720, 0, 0, peak_floor_kw=16.0,
+                                now=datetime(2026, 11, 4, tzinfo=timezone.utc))
+        c = next(p for p in info["plans"] if p["code"] == "C")
+        self.assertEqual(c["kwh"], 7200)
+        self.assertAlmostEqual(c["demand_usd"], 16.0 * 15.38, places=1)
+        self.assertEqual(info["peaks"]["any"]["kw"], 16.0)
+
+    def test_2027_rates_apply_by_period_date(self):
+        jan = datetime(2027, 1, 1, 7, tzinfo=timezone.utc)
+        self.assertEqual(tariff.rates_for("C", jan)[1]["d_any"], 16.57)
+        self.assertEqual(tariff.rates_for("C", jan - timedelta(hours=8))[1]["d_any"], 15.38)
+
+    def test_billed_peaks_now_ct_adds_onpeak_in_window(self):
+        pk = {"any": {"kw": 15.0}, "onpeak": {"kw": 12.0}}
+        on = datetime(2026, 11, 2, 23, 30, tzinfo=timezone.utc)
+        off = datetime(2026, 11, 2, 18, tzinfo=timezone.utc)
+        self.assertEqual([b["which"] for b in tariff.billed_peaks_now("CT", on, pk)], ["any", "onpeak"])
+        self.assertEqual([b["which"] for b in tariff.billed_peaks_now("CT", off, pk)], ["any"])
+        self.assertEqual([b["which"] for b in tariff.billed_peaks_now("A", off, pk)], [])
+        self.assertGreater(tariff.marginal_kwh("AT", on, 0, 0), tariff.marginal_kwh("AT", off, 0, 0))
 
 
 if __name__ == "__main__":

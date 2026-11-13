@@ -84,4 +84,15 @@ class ElectricityAdapter(Adapter):
                 "crypto_kwh": kwh("crypto_mining_wh"),
                 "net_grid_kwh": kwh("net_grid_wh"),
             }
+        # Every hour of the current billing period, for the rate-plan comparison (fleet/tariff.py)
+        start = (bill.get("period_start_utc") or "")[:19]
+        if start:
+            period = self._optional(f"/api/hourly?start={start.replace('T', ' ')}"
+                                    f"&end={this_hour.strftime(fmt)}")
+            if isinstance(period, list):
+                accounts["electricity:period"] = {
+                    "period_start_utc": start, "hours_in_period": bill.get("hours_in_period"),
+                    "wpca": wpca, "tax": tax, "house_peak_kw": bill.get("peak_demand_kw"),
+                    "hours": [[h.get("hour_start"), h.get("net_grid_wh")] for h in period],
+                }
         return {"machines": [], "accounts": accounts}

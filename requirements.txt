@@ -5,3 +5,4 @@ bcrypt==4.2.1
 PyJWT[crypto]==2.9.0
 fpdf2==2.8.2
 rapidfuzz==3.10.1
+tzdata==2025.2

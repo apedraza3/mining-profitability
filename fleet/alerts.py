@@ -82,8 +82,10 @@ def _problems(fleet: dict, snap: dict) -> list[tuple[str, str, str]]:
     dm = (fleet.get("summary") or {}).get("demand") or {}
     if dm.get("status") in ("close", "over") and dm.get("minutes_into_hour", 0) >= 10:
         out.append(("demand:hour", "demand",
-                    f"Demand: this hour is on track for {dm['projected_kw']:.1f} kW vs this month's peak "
-                    f"{dm['peak_kw']:.1f} kW. Hold off big loads (dryer, oven, extra rigs) until the hour ends."))
+                    f"Demand: this hour is on track for {dm['projected_kw']:.1f} kW vs this month's "
+                    f"{'4-8 PM ' if dm.get('which_peak') == 'onpeak' else ''}peak {dm['peak_kw']:.1f} kW "
+                    f"(${dm.get('demand_rate_kw_month') or 0:.2f}/kW-month). Hold off big loads "
+                    f"(EV charging, dryer, oven, extra rigs) until the hour ends."))
     fan = accounts.get("fancontrol:basement") or {}
     if fan.get("mode") == "on" and fan.get("error"):
         out.append(("fan:write", "fan", f"Fan control can't set the fans: {fan['error'][:120]}"))
