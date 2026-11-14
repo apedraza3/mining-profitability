@@ -10,10 +10,13 @@ There is no earnings-history endpoint. rented_price_by_currency is the renter's 
 day, before Clore's host fees. Secret fields (e.g. init_token) are never stored.
 """
 
+import logging
 import time
 
 from fleet import settings
 from fleet.adapters.base import Adapter, SourceError
+
+logger = logging.getLogger(__name__)
 
 API = "https://api.clore.ai/v1"
 KEEP_FIELDS = ("online", "connected", "visibility", "pricing", "min_spot_pricing",
@@ -49,6 +52,22 @@ class CloreAdapter(Adapter):
             raise SourceError(f"Clore error code {code}")
         return data
 
+    _price = (0.0, None)  # (monotonic time fetched, CLORE price in USD)
+
+    def _clore_usd(self):
+        """CLORE token price for rentals paid in CLORE. CoinGecko public API, cached 10 min;
+        best-effort (keeps the last price, or None, if it fails)."""
+        fetched, price = CloreAdapter._price
+        if price is None or time.monotonic() - fetched > 600:
+            try:
+                data = self.get_json("https://api.coingecko.com/api/v3/simple/price",
+                                     params={"ids": "clore-ai", "vs_currencies": "usd"}, timeout=10)
+                price = float(data["clore-ai"]["usd"])
+                CloreAdapter._price = (time.monotonic(), price)
+            except Exception as e:
+                logger.info("CLORE price unavailable: %s", e)
+        return price
+
     def poll(self) -> dict:
         servers = self._call("my_servers").get("servers") or []
         time.sleep(1.1)
@@ -70,5 +89,6 @@ class CloreAdapter(Adapter):
             })
         accounts = {"clore:wallets": {
             "wallets": [{"name": w.get("name"), "balance": w.get("balance")} for w in wallets],
+            "clore_usd": self._clore_usd(),
         }}
         return {"machines": machines, "accounts": accounts}

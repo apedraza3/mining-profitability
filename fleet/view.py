@@ -563,6 +563,7 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
     demand_rate = elec.get("demand_rate_with_tax")
     kryptex_rates = (accounts.get("kryptex:rates") or {}).get("data", {}).get("rates", {})
     vast_earnings = (accounts.get("vast:earnings") or {}).get("data", {})
+    clore_usd = (accounts.get("clore:wallets") or {}).get("data", {}).get("clore_usd")
     inventory =_inventory_index(inventory_miners, inventory_locations)
     matched_inventory_ids = set()
 
@@ -639,6 +640,7 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
             prices_by_ccy = (device.get("extra") or {}).get("rented_price_by_currency") or {}
             usd_price = next((v for k, v in prices_by_ccy.items() if k.upper().startswith("USD")), None)
             btc_price = next((v for k, v in prices_by_ccy.items() if "bitcoin" in k.lower() or k.upper() == "BTC"), None)
+            clore_price = next((v for k, v in prices_by_ccy.items() if k.upper().startswith("CLORE")), None)
             # Host keeps 1 - base fee - extra fee. Extra applies to BTC/USD-stablecoin orders,
             # not CLORE ones. Owner's 2026-11-09/10 statement: $22 gross -> $1.10 base +
             # $3.30 extra -> $17.60 revenue, i.e. 5% + 15%.
@@ -652,6 +654,11 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
                 expected_usd = float(btc_price) * btc_usd * keep
                 expected_basis = (f"Clore renter price in BTC x BTC price minus host fees "
                                   f"({CLORE_BASE_FEE:.0%} base + {CLORE_EXTRA_FEE:.0%} extra on BTC orders)")
+            elif clore_price is not None and clore_usd:
+                # CLORE-token orders pay only the base fee
+                expected_usd = float(clore_price) * clore_usd * (1 - CLORE_BASE_FEE)
+                expected_basis = (f"Clore renter price {float(clore_price):,.0f} CLORE/day x "
+                                  f"${clore_usd:.5f} minus the {CLORE_BASE_FEE:.0%} host fee")
             elif prices_by_ccy:
                 expected_basis = "rented, priced in " + ", ".join(prices_by_ccy) + " (no USD price for that currency)"
             else:

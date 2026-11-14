@@ -389,6 +389,18 @@ class RentalRows(unittest.TestCase):
         self.assertEqual(rows[0]["location"], "home")
         self.assertEqual(rows[0]["watts"], 860)
 
+    def test_clore_token_rental_priced_with_base_fee_only(self):
+        state = {"sources": [], "machines": [
+            {"machine_key": "clore:c", "source": "clore", "name": "c", "kind": "rental_server",
+             "location": "clore", "running": True, "status": "fully rented",
+             "extra": {"rented_price_by_currency": {"CLORE-Blockchain": 10000}}, "fetched_at": iso(10)}],
+            "accounts": [{"account_key": "clore:wallets", "source": "clore", "fetched_at": iso(10),
+                          "data": {"wallets": [], "clore_usd": 0.002}}]}
+        with mock.patch.object(view.store, "read_all", return_value=state):
+            f = view.build_fleet([], [])
+        row = next(r for r in f["machines"] if r["name"] == "c")
+        self.assertAlmostEqual(row["expected_usd_day"], 10000 * 0.002 * 0.95)
+
 
 class FanControl(unittest.TestCase):
     CFG = {"min": 4, "max": 10, "air_f": (80.0, 95.0), "asic_c": (70.0, 85.0), "gpu_c": (70.0, 83.0),
