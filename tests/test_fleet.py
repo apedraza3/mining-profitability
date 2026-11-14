@@ -364,6 +364,31 @@ class RentalRows(unittest.TestCase):
         self.assertEqual(rows["rig"]["location"], "clore")
         self.assertAlmostEqual(rows["usdrig"]["expected_usd_day"], 17.6)  # matches the Clore statement
 
+    def test_rented_rig_hides_its_idle_mining_row(self):
+        state = {
+            "sources": [],
+            "machines": [
+                {"machine_key": "clore:gpu01-170hx", "source": "clore", "name": "gpu01-170hx",
+                 "kind": "rental_server", "location": "clore", "running": True, "status": "fully rented",
+                 "extra": {"rented_price_by_currency": {"USD-Blockchain": 10}}, "fetched_at": iso(10)},
+                {"machine_key": "kryptex:prl:gpu01", "source": "kryptex", "name": "gpu01", "kind": "asic",
+                 "location": None, "running": False, "status": "offline", "hashrate_hs": 0,
+                 "extra": {}, "fetched_at": iso(10)},
+            ],
+            "accounts": [
+                {"account_key": "electricity:rates", "source": "electricity", "fetched_at": iso(10),
+                 "data": {"marginal_energy_rate": 0.1, "demand_rate_with_tax": 16.41}},
+            ],
+        }
+        inventory = [{"id": 9, "name": "gpu01", "aliases": ["gpu01-170hx"], "location_id": "h",
+                      "wattage": 860, "status": "active"}]
+        with mock.patch.object(view.store, "read_all", return_value=state):
+            f = view.build_fleet(inventory, [{"id": "h", "name": "home"}])
+        rows = [r for r in f["machines"] if r["kind"] not in ("overhead", "unattributed", "non_mining")]
+        self.assertEqual([r["name"] for r in rows], ["gpu01-170hx"])
+        self.assertEqual(rows[0]["location"], "home")
+        self.assertEqual(rows[0]["watts"], 860)
+
 
 class FanControl(unittest.TestCase):
     CFG = {"min": 4, "max": 10, "air_f": (80.0, 95.0), "asic_c": (70.0, 85.0), "gpu_c": (70.0, 83.0),

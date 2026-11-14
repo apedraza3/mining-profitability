@@ -77,6 +77,10 @@ def _inventory_index(inventory_miners, inventory_locations):
         index[norm(m.get("name"))] = entry
         if m.get("powerpool_worker_key"):
             index[norm(m["powerpool_worker_key"])] = entry
+        # Other names the same machine reports under (e.g. its Clore server name when the
+        # rig switches between mining and renting)
+        for alias in m.get("aliases") or []:
+            index[norm(alias)] = entry
     return index
 
 
@@ -686,6 +690,7 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
             "location": location,
             "model": ((device or {}).get("extra") or {}).get("model") or (inv or {}).get("model"),
             "in_inventory": inv is not None,
+            "inventory_id": (inv or {}).get("id"),
             "inventory_status": (inv or {}).get("status"),
             "running": running,
             "status": status,
@@ -706,6 +711,11 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
             "detail": {m["source"]: m.get("extra") for m in members},
         })
 
+    # A rig that is rented out stops mining: hide its idle pool row while the rental runs
+    rented = {r["inventory_id"] for r in rows
+              if r["inventory_id"] and r["kind"] == "rental_server" and r["running"]}
+    rows = [r for r in rows if not (r["inventory_id"] in rented and r["kind"] != "rental_server"
+                                    and r["running"] is not True)]
     rows.extend(_inventory_only_rows(inventory_miners, inventory_locations, matched_inventory_ids,
                                      rates, btc_usd, home_rate, demand_rate))
     realtime = (accounts.get("electricity:realtime") or {}).get("data")
