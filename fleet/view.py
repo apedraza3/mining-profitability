@@ -719,10 +719,19 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
         })
 
     # A rig that is rented out stops mining: hide its idle pool row while the rental runs
+    # (Clore "running" only means online; the status says whether a renter has it)
+    def _is_rented(r):
+        st = (r.get("status") or "").lower()
+        return "rented" in st and "not rented" not in st
     rented = {r["inventory_id"] for r in rows
-              if r["inventory_id"] and r["kind"] == "rental_server" and r["running"]}
+              if r["inventory_id"] and r["kind"] == "rental_server" and _is_rented(r)}
     rows = [r for r in rows if not (r["inventory_id"] in rented and r["kind"] != "rental_server"
                                     and r["running"] is not True)]
+    # ...and while it is not rented but mining (Clore background job), hide the idle listing
+    mining = {r["inventory_id"] for r in rows
+              if r["inventory_id"] and r["kind"] != "rental_server" and r["running"] is True}
+    rows = [r for r in rows if not (r["inventory_id"] in mining and r["kind"] == "rental_server"
+                                    and r["inventory_id"] not in rented)]
     rows.extend(_inventory_only_rows(inventory_miners, inventory_locations, matched_inventory_ids,
                                      rates, btc_usd, home_rate, demand_rate))
     realtime = (accounts.get("electricity:realtime") or {}).get("data")

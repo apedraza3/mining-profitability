@@ -389,6 +389,23 @@ class RentalRows(unittest.TestCase):
         self.assertEqual(rows[0]["location"], "home")
         self.assertEqual(rows[0]["watts"], 860)
 
+    def test_idle_listing_hidden_while_background_job_mines(self):
+        state = {"sources": [], "machines": [
+            {"machine_key": "clore:box", "source": "clore", "name": "box", "kind": "rental_server",
+             "location": "clore", "running": True, "status": "online, not rented", "extra": {},
+             "fetched_at": iso(10)},
+            {"machine_key": "kryptex:prl:bx", "source": "kryptex", "name": "bx", "kind": "asic",
+             "location": None, "running": True, "status": "running", "hashrate_hs": 1e15,
+             "extra": {}, "fetched_at": iso(10)}],
+            "accounts": [{"account_key": "electricity:rates", "source": "electricity", "fetched_at": iso(10),
+                          "data": {"marginal_energy_rate": 0.1, "demand_rate_with_tax": 16.41}}]}
+        inventory = [{"id": 5, "name": "box", "aliases": ["bx"], "location_id": "h", "wattage": 2300,
+                      "status": "active"}]
+        with mock.patch.object(view.store, "read_all", return_value=state):
+            f = view.build_fleet(inventory, [{"id": "h", "name": "home"}])
+        rows = [r for r in f["machines"] if r["kind"] not in ("overhead", "unattributed", "non_mining")]
+        self.assertEqual([r["name"] for r in rows], ["bx"])
+
     def test_clore_token_rental_priced_with_base_fee_only(self):
         state = {"sources": [], "machines": [
             {"machine_key": "clore:c", "source": "clore", "name": "c", "kind": "rental_server",
