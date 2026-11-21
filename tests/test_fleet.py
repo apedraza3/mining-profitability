@@ -730,3 +730,17 @@ class Prices(unittest.TestCase):
         self.assertEqual(prices.price_on("TST", "2026-11-02"), 5.0)   # nearest earlier day
         self.assertEqual(prices.price_on("TST", "2026-11-03"), 7.0)
         self.assertIsNone(prices.price_on("TST", "2026-10-01"))
+
+
+class ManualLedger(unittest.TestCase):
+    def test_parse_rows(self):
+        from fleet.adapters import manual
+        rows = [{"entry_id": "a", "ts": "2026-11-30", "kind": "Summary", "coin": "clore",
+                 "amount": "110,995.20", "usd": "", "note": "x"},
+                {"entry_id": "#comment", "ts": "", "kind": ""},
+                {"entry_id": "b", "ts": "", "kind": "fee"},
+                {"entry_id": "c", "ts": "2026-01-01", "kind": "gift"}]
+        entries, errors = manual.parse_rows(rows)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual((entries[0]["coin"], entries[0]["amount"], entries[0]["usd"]), ("CLORE", 110995.2, None))
+        self.assertEqual(len(errors), 2)

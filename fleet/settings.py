@@ -20,6 +20,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 #            "pdu": "chatsworth:CB1"}, {"label": "Server + workshop", "mining": false}]}
 FLEET_OVERHEADS = Path(os.getenv("FLEET_OVERHEADS", str(BASE_DIR / "data" / "fleet_overheads.json")))
 TELEMETRY_DB = Path(os.getenv("FLEET_DB", str(BASE_DIR / "data" / "telemetry.db")))
+# Hand-kept income/cost lines for sources with no API (Clore revenue, Kryptex balance page,
+# host invoices). CSV: entry_id,ts,kind,coin,amount,usd,note — see manual_ledger.example.csv
+MANUAL_LEDGER = Path(os.getenv("FLEET_MANUAL_LEDGER", str(BASE_DIR / "data" / "manual_ledger.csv")))
 
 # Raw samples older than this are purged (rollups come later)
 SAMPLE_RETENTION_DAYS = int(os.getenv("FLEET_SAMPLE_RETENTION_DAYS", "90"))

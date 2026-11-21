@@ -14,4 +14,5 @@ data/.flask_secret
 deploy-update.sh
 fleet.env
 data/fleet_overheads.json
+data/manual_ledger.csv
 fleet-ssh/

@@ -1,0 +1,4 @@
+entry_id,ts,kind,coin,amount,usd,note
+clore-revenue-2026-11,2026-11-30,summary,CLORE,95000,130.50,Clore Revenue (M view) rental payments in CLORE for November
+clore-withdraw-2026-10-30,2026-10-30,payout,USD,350,350,Clore USD withdrawal (Transactions page)
+host-invoice-2026-11,2026-11-30,fee,USD,,412.80,Metered Mining November hosting invoice
