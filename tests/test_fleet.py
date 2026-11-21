@@ -715,3 +715,18 @@ class Parked(unittest.TestCase):
         row = f["machines"][0]
         self.assertEqual(row["status"], "off (for sale)")
         self.assertEqual(alerts._problems(f, {"machines": [], "accounts": []}), [])
+
+
+class Prices(unittest.TestCase):
+    def test_parse_chart_last_point_per_day_wins(self):
+        from fleet import prices
+        day_ms = 1795219200000  # 2026-11-21 00:00 UTC
+        got = prices.parse_chart([[day_ms, 1.0], [day_ms + 3600_000, 2.0], ["bad"], [day_ms + 86400_000, 3]])
+        self.assertEqual(got, {"2026-11-21": 2.0, "2026-11-22": 3.0})
+
+    def test_save_and_price_on(self):
+        from fleet import prices
+        prices.save("TST", {"2026-11-01": 5.0, "2026-11-03": 7.0})
+        self.assertEqual(prices.price_on("TST", "2026-11-02"), 5.0)   # nearest earlier day
+        self.assertEqual(prices.price_on("TST", "2026-11-03"), 7.0)
+        self.assertIsNone(prices.price_on("TST", "2026-10-01"))

@@ -6,15 +6,17 @@ where the view marks it stale. One source failing never stops the others.
 """
 
 import logging
+import threading
 import time
 
-from fleet import alerts, fan_control, history, store
+from fleet import alerts, fan_control, history, prices, store
 from fleet.adapters import all_adapters
 
 logger = logging.getLogger("fleet.poller")
 
 TICK_S = 5
 PURGE_EVERY_S = 6 * 3600
+PRICES_EVERY_S = 6 * 3600
 
 
 def run_adapter(adapter, failures: int) -> int:
@@ -56,6 +58,7 @@ def main():
     next_fan = time.monotonic() + 75
     next_alert = time.monotonic() + 120
     next_rollup = time.monotonic() + 180
+    next_prices = time.monotonic() + 240
     logger.info("Fleet poller started with sources: %s", ", ".join(a.name for a in adapters))
 
     while True:
@@ -90,6 +93,10 @@ def main():
             except Exception as e:  # never stop polling because of alerting
                 logger.warning("Alerts failed: %s", e)
             next_alert = now + alerts.ALERT_EVERY_S
+        if now >= next_prices:
+            # Paced to the public API's limit (minutes per run), so off the polling thread
+            threading.Thread(target=prices.tick, name="price-history", daemon=True).start()
+            next_prices = time.monotonic() + PRICES_EVERY_S
         if now >= next_rollup:
             try:
                 n = history.rollup()
