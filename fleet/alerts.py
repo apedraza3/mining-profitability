@@ -38,7 +38,7 @@ def _problems(fleet: dict, snap: dict) -> list[tuple[str, str, str]]:
     out = []
     support = ("overhead", "unattributed", "non_mining")
     for r in fleet.get("machines") or []:
-        if r.get("kind") in support or r.get("inventory_status") == "inactive":
+        if r.get("kind") in support or r.get("parked") or r.get("inventory_status") == "inactive":
             continue
         if r.get("sources") == ["inventory"]:
             continue  # no live source by design (e.g. CircleHash)

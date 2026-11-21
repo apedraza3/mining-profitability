@@ -68,6 +68,45 @@ CREATE TABLE IF NOT EXISTS fleet_snapshots (
     ts TEXT PRIMARY KEY,
     data TEXT NOT NULL              -- JSON, see fleet.history.compact()
 ) WITHOUT ROWID;
+
+-- Last account_state of each UTC day, kept forever. account_state is overwritten every
+-- poll, so without this balances, earnings and coin prices have no history at all.
+CREATE TABLE IF NOT EXISTS account_daily (
+    day TEXT NOT NULL,              -- "YYYY-MM-DD" (UTC)
+    account_key TEXT NOT NULL,
+    source TEXT NOT NULL,
+    data TEXT NOT NULL,             -- JSON, same shape as account_state.data
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (day, account_key)
+) WITHOUT ROWID;
+
+-- Every change of a machine's running flag or status word, kept forever. Uptime, rented
+-- hours and "why was it down" come from here, not from the purged samples.
+CREATE TABLE IF NOT EXISTS machine_events (
+    machine_key TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    running INTEGER,
+    status TEXT,
+    prev_running INTEGER,
+    prev_status TEXT,
+    PRIMARY KEY (machine_key, ts)
+) WITHOUT ROWID;
+
+-- Money actually credited or paid, one row per item, kept forever (the books).
+-- kind: earning (pool/platform credit) | payout (sent to a wallet/bank) | fee | sale | other
+CREATE TABLE IF NOT EXISTS ledger (
+    source TEXT NOT NULL,           -- powerpool | kryptex | vast | stripe | clore | manual
+    entry_id TEXT NOT NULL,         -- stable id from the source (date, txid, invoice id)
+    ts TEXT NOT NULL,               -- when credited/paid (UTC ISO or YYYY-MM-DD)
+    kind TEXT NOT NULL,
+    coin TEXT,
+    amount REAL,
+    usd REAL,                       -- USD value at ts as reported by the source, else NULL
+    txid TEXT,
+    detail TEXT,                    -- JSON
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY (source, entry_id)
+) WITHOUT ROWID;
 """
 
 
@@ -132,6 +171,15 @@ def upsert_machines(machines: list[dict]):
     now = utcnow()
     with connect() as conn:
         for m in machines:
+            running = None if m.get("running") is None else int(bool(m["running"]))
+            prev = conn.execute("SELECT running, status FROM machine_state WHERE machine_key=?",
+                                (m["machine_key"],)).fetchone()
+            if prev is None or prev["running"] != running or prev["status"] != m.get("status"):
+                conn.execute(
+                    "INSERT OR REPLACE INTO machine_events (machine_key, ts, running, status, "
+                    "prev_running, prev_status) VALUES (?, ?, ?, ?, ?, ?)",
+                    (m["machine_key"], now, running, m.get("status"),
+                     prev["running"] if prev else None, prev["status"] if prev else None))
             conn.execute(
                 """INSERT INTO machine_state (machine_key, source, name, kind, location, algorithm,
                        running, status, hashrate_hs, watts, watts_quality, temp_max, extra,
@@ -165,12 +213,64 @@ def upsert_machines(machines: list[dict]):
 
 
 def upsert_account(account_key: str, source: str, data: dict):
+    now = utcnow()
+    blob = json.dumps(data)
     with connect() as conn:
         conn.execute(
             """INSERT INTO account_state (account_key, source, data, fetched_at) VALUES (?, ?, ?, ?)
                ON CONFLICT(account_key) DO UPDATE SET data=excluded.data, fetched_at=excluded.fetched_at""",
-            (account_key, source, json.dumps(data), utcnow()),
+            (account_key, source, blob, now),
         )
+        # The day's last copy wins, so each day keeps its end-of-day state
+        conn.execute(
+            "INSERT OR REPLACE INTO account_daily (day, account_key, source, data, fetched_at) "
+            "VALUES (?, ?, ?, ?, ?)", (now[:10], account_key, source, blob, now))
+
+
+def add_ledger(entries: list[dict]) -> int:
+    """Insert or refresh ledger rows (keyed by source + entry_id). Returns rows written."""
+    now = utcnow()
+    with connect() as conn:
+        for e in entries:
+            conn.execute(
+                """INSERT INTO ledger (source, entry_id, ts, kind, coin, amount, usd, txid, detail,
+                                       recorded_at)
+                   VALUES (:source, :entry_id, :ts, :kind, :coin, :amount, :usd, :txid, :detail, :now)
+                   ON CONFLICT(source, entry_id) DO UPDATE SET ts=excluded.ts, kind=excluded.kind,
+                       coin=excluded.coin, amount=excluded.amount, usd=excluded.usd,
+                       txid=excluded.txid, detail=excluded.detail""",
+                {"coin": None, "amount": None, "usd": None, "txid": None, **e,
+                 "detail": json.dumps(e.get("detail") or {}), "now": now})
+    return len(entries)
+
+
+def read_ledger(since: str = "", until: str = "9999") -> list[dict]:
+    with connect(readonly=True) as conn:
+        if conn is None:
+            return []
+        try:
+            rows = conn.execute("SELECT * FROM ledger WHERE ts >= ? AND ts < ? ORDER BY ts",
+                                (since, until)).fetchall()
+        except sqlite3.OperationalError:
+            return []
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["detail"] = json.loads(d.get("detail") or "{}")
+        out.append(d)
+    return out
+
+
+def read_machine_events(since_iso: str = "") -> list[dict]:
+    with connect(readonly=True) as conn:
+        if conn is None:
+            return []
+        try:
+            rows = conn.execute("SELECT * FROM machine_events WHERE ts >= ? ORDER BY ts",
+                                (since_iso,)).fetchall()
+        except sqlite3.OperationalError:
+            return []
+    return [dict(r) for r in rows]
 
 
 def purge_samples():

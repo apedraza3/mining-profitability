@@ -75,4 +75,43 @@ class PowerPoolAdapter(Adapter):
                 except Exception as e:
                     logger.warning("PowerPool %s failed: %s", route, e)
 
-        return {"machines": machines, "accounts": accounts}
+        ledger = earnings_to_ledger((accounts.get("powerpool:earnings") or {}).get("raw"))
+        return {"machines": machines, "accounts": accounts, "ledger": ledger}
+
+
+def earnings_to_ledger(raw) -> list[dict]:
+    """PowerPool daily earnings -> one ledger row per day per coin (pool credit, not a payout).
+
+    Shape seen 2026-11-21: {"earnings": [{"earning_timestamp": "2026-11-20", "usd_value": 50.98,
+    "coins": [{"coin_ticker": "USDC", "coin_balance": 25.49}, {"coin_ticker": "BTC", ...}]}]}.
+    usd_value is PowerPool's USD figure for the whole day. Stablecoin rows are valued 1:1 and the
+    single non-stable coin (BTC) gets the rest, so a day's rows add up to usd_value. With more
+    than one non-stable coin their usd is left empty (price them from the price history).
+    """
+    out = []
+    earnings = raw.get("earnings") if isinstance(raw, dict) else None
+    for e in earnings or []:
+        day = e.get("earning_timestamp")
+        coins = [c for c in e.get("coins") or [] if c.get("coin_ticker")]
+        if not day or not coins:
+            continue
+        total = e.get("usd_value")
+        usdc = sum(float(c.get("coin_balance") or 0) for c in coins
+                   if c["coin_ticker"].upper() in ("USDC", "USDT", "USD"))
+        others = [c for c in coins if c["coin_ticker"].upper() not in ("USDC", "USDT", "USD")]
+        for c in coins:
+            ticker = c["coin_ticker"].upper()
+            amount = float(c.get("coin_balance") or 0)
+            if ticker in ("USDC", "USDT", "USD"):
+                usd = amount
+            elif total is not None and len(others) == 1:
+                usd = max(float(total) - usdc, 0.0)
+            else:
+                usd = None
+            out.append({
+                "source": "powerpool", "entry_id": f"{day}:{ticker}", "ts": day,
+                "kind": "earning", "coin": ticker, "amount": amount, "usd": usd,
+                "detail": {"day_usd_value": total, "speed": e.get("speed"),
+                           "speed_units": e.get("speed_units")},
+            })
+    return out

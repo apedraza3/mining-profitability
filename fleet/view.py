@@ -26,6 +26,22 @@ CLORE_EXTRA_FEE = 0.15
 POOL_SOURCES = ("powerpool", "kryptex")
 KRYPTEX_COIN_ALGO = {"btc": "sha256", "ltc": "scrypt", "doge": "scrypt", "kas": "kheavyhash"}
 DAYS_PER_MONTH = 30.4
+# Inventory "lifecycle": machines the owner has parked on purpose. Off is expected, so no
+# down/rental alerts and no "assumed off" warning; they stay on record for the books.
+PARKED_LIFECYCLES = {"offline": "intentionally offline", "for_sale": "for sale",
+                     "sold": "sold", "retired": "retired"}
+
+
+def parked_label(inv: dict | None) -> str | None:
+    """Why this inventory machine is off on purpose, or None if it should be running."""
+    if not inv:
+        return None
+    lifecycle = (inv.get("lifecycle") or "active").lower()
+    if lifecycle in PARKED_LIFECYCLES:
+        return PARKED_LIFECYCLES[lifecycle]
+    if inv.get("status") == "inactive":
+        return "marked inactive"
+    return None
 
 
 def norm(name: str) -> str:
@@ -112,7 +128,8 @@ def _inventory_only_rows(inventory_miners, inventory_locations, matched_ids, rat
     locations = {l.get("id"): l for l in inventory_locations or []}
     out = []
     for inv in inventory_miners or []:
-        if inv.get("id") in matched_ids or (inv.get("status") or "active") != "active":
+        if (inv.get("id") in matched_ids or (inv.get("status") or "active") != "active"
+                or parked_label(inv)):
             continue
         loc = locations.get(inv.get("location_id"), {})
         location = loc.get("name")
@@ -340,7 +357,7 @@ def reconcile_home_power(rows, realtime, home_rate, demand_rate, overheads=None,
             # powered on, their draw is inside the gap (and earning nothing).
             # Machines the owner marked inactive in inventory are known to be off.
             "assumed_off": [r["name"] for r in home if r.get("watts_quality") == "assumed off"
-                            and r.get("inventory_status") != "inactive"]}
+                            and not r.get("parked")]}
     if not realtime or realtime.get("crypto_mining_w") is None:
         return info
     age = _age_s(realtime.get("measured_at"))
@@ -687,8 +704,9 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
                         if expected_usd is not None and power_usd is not None else None)
         net_loaded = (net_marginal - (demand_usd or 0) if net_marginal is not None else None)
 
-        if running is False and (inv or {}).get("status") == "inactive":
-            status = "off (marked inactive)"
+        parked = parked_label(inv)
+        if parked and running is not True:
+            status = f"off ({parked})"
 
         rows.append({
             "name": primary["name"],
@@ -699,6 +717,8 @@ def build_fleet(inventory_miners=None, inventory_locations=None) -> dict:
             "in_inventory": inv is not None,
             "inventory_id": (inv or {}).get("id"),
             "inventory_status": (inv or {}).get("status"),
+            "lifecycle": (inv or {}).get("lifecycle") or "active",
+            "parked": parked,
             "running": running,
             "status": status,
             "algorithm": algorithm,

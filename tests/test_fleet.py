@@ -18,7 +18,7 @@ os.environ["FLEET_DB"] = str(Path(_TMP) / "telemetry.db")
 os.environ["FLEET_OVERHEADS"] = str(Path(_TMP) / "none.json")
 
 from fleet import alerts, fan_control, history, snmp, store, tariff, view  # noqa: E402
-from fleet.adapters import foreman, gpu_temps, homeassistant, kryptex, lan_asic, pdu, vast  # noqa: E402
+from fleet.adapters import foreman, gpu_temps, homeassistant, kryptex, lan_asic, pdu, powerpool, vast  # noqa: E402
 from fleet.units import pay_rate_per_hs, to_hs  # noqa: E402
 
 
@@ -649,3 +649,69 @@ class Tariff(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Books(unittest.TestCase):
+    """Money and history that must survive: ledger, daily account copies, machine events."""
+
+    def setUp(self):
+        store.init_db()
+
+    def test_powerpool_earnings_to_ledger(self):
+        raw = {"earnings": [
+            {"earning_timestamp": "2026-11-20", "usd_value": 50.98,
+             "coins": [{"coin_ticker": "USDC", "coin_balance": 25.49},
+                       {"coin_ticker": "BTC", "coin_balance": 0.00042}]},
+            {"earning_timestamp": None, "coins": []}]}
+        rows = powerpool.earnings_to_ledger(raw)
+        self.assertEqual([r["entry_id"] for r in rows], ["2026-11-20:USDC", "2026-11-20:BTC"])
+        self.assertAlmostEqual(sum(r["usd"] for r in rows), 50.98)
+        self.assertEqual(powerpool.earnings_to_ledger(None), [])
+        self.assertEqual(powerpool.earnings_to_ledger(["bad"]), [])
+
+    def test_ledger_upsert_is_idempotent(self):
+        e = {"source": "test", "entry_id": "d1", "ts": "2026-01-01", "kind": "earning",
+             "coin": "BTC", "amount": 1.0, "usd": 10.0}
+        store.add_ledger([e])
+        store.add_ledger([{**e, "usd": 12.0}])
+        rows = [r for r in store.read_ledger() if r["source"] == "test"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["usd"], 12.0)
+
+    def test_account_daily_keeps_last_copy_per_day(self):
+        store.upsert_account("t:acct", "t", {"balance": 1})
+        store.upsert_account("t:acct", "t", {"balance": 2})
+        with store.connect(readonly=True) as conn:
+            rows = conn.execute("SELECT data FROM account_daily WHERE account_key='t:acct'").fetchall()
+        self.assertEqual([r["data"] for r in rows], ['{"balance": 2}'])
+
+    def test_machine_events_only_on_change(self):
+        m = {"machine_key": "t:m1", "source": "t", "name": "m1", "running": True, "status": "hashing"}
+        store.upsert_machines([m])
+        with mock.patch.object(store, "utcnow", return_value="2099-01-01T00:00:01+00:00"):
+            store.upsert_machines([m])                                   # unchanged: no event
+        with mock.patch.object(store, "utcnow", return_value="2099-01-01T00:00:02+00:00"):
+            store.upsert_machines([{**m, "running": False, "status": "offline"}])
+        ev = [e for e in store.read_machine_events() if e["machine_key"] == "t:m1"]
+        self.assertEqual([(e["running"], e["prev_running"]) for e in ev], [(1, None), (0, 1)])
+
+
+class Parked(unittest.TestCase):
+    def test_labels(self):
+        self.assertIsNone(view.parked_label(None))
+        self.assertIsNone(view.parked_label({"status": "active"}))
+        self.assertEqual(view.parked_label({"lifecycle": "for_sale"}), "for sale")
+        self.assertEqual(view.parked_label({"status": "inactive"}), "marked inactive")
+
+    def test_parked_rig_no_alert_and_labelled(self):
+        state = {"sources": [], "accounts": [], "machines": [
+            {"machine_key": "clore:x", "source": "clore", "name": "LINUX_abc", "kind": "rental_server",
+             "location": "clore", "running": False, "status": "offline", "extra": {},
+             "fetched_at": iso(10)}]}
+        inv = [{"id": 9, "name": "atp-gpu01", "aliases": ["LINUX_abc"], "location_id": "h",
+                "wattage": 1000, "status": "active", "lifecycle": "for_sale"}]
+        with mock.patch.object(view.store, "read_all", return_value=state):
+            f = view.build_fleet(inv, [{"id": "h", "name": "home"}])
+        row = f["machines"][0]
+        self.assertEqual(row["status"], "off (for sale)")
+        self.assertEqual(alerts._problems(f, {"machines": [], "accounts": []}), [])

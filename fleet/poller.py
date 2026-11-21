@@ -27,6 +27,8 @@ def run_adapter(adapter, failures: int) -> int:
         store.upsert_machines(result.get("machines", []))
         for key, data in (result.get("accounts") or {}).items():
             store.upsert_account(key, adapter.name, data)
+        if result.get("ledger"):
+            store.add_ledger(result["ledger"])
         store.record_source(adapter.name, configured=True, ok=True)
         return 0
     except Exception as e:
